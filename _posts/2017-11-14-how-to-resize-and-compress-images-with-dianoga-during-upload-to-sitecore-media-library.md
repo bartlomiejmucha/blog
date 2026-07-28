@@ -3,7 +3,7 @@ layout: post
 title: "How to resize and compress images (with Dianoga) during upload to Sitecore media library"
 description: "I describe here I implemented functionality to resize and compress images during upload to media library."
 date: "2017-11-14 +0100"
-tags: [Sitecore, Sitecore 8.2 Update-3, Dianoga, Media Library, compression, resize]
+tags: [Sitecore, Sitecore 8.2 Update-3, Dianoga, Media Library, Compression, resize]
 image:
 ---
 ### A bit of theory, TL;DR;

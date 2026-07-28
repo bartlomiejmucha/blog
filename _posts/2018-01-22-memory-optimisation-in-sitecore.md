@@ -3,7 +3,7 @@ layout: post
 title: "Memory optimisation in Sitecore"
 description: "How to lower memory consumption in Sitecore."
 date: "2018-01-22 +0100"
-tags: [Sitecore, Sitecore 8.2 Update-3, Memory, Internig, Performance]
+tags: [Sitecore, Sitecore 8.2 Update-3, Memory, Interning, Performance]
 image: /assets/images/posts/012/memory-consumption-over-time-small.jpg
 ---
 If you host your application on a 64-bit environment and if you have a lot of RAM then you can consider disabling cache size limits by changing this setting:

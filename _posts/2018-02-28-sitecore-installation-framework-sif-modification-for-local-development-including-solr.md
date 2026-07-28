@@ -3,7 +3,7 @@ layout: post
 title: "The best SIF modification for local development"
 description: "My custom SIF installation (and uninstallation) scripts for local development."
 date: "2018-02-28 +0100"
-tags: [Sitecore, Sitecore 9.0 Update 1, Square, Solr, Solr 6.6.2, SIF, SIF 1.2]
+tags: [Sitecore, Sitecore 9.0 Update-1, Square, Solr, Solr 6.6.2, SIF, SIF 1.2]
 image:
 ---
 If you are reading this, then the title did the job, especially this "the best" part :). There are many blog posts about SIF nowadays and many approaches to Sitecore 9 installation. That's why I thought that if I title this article "another SIF installation script" nobody would ever read it. So if I have your attention, then let me tell you why I wrote this post.
