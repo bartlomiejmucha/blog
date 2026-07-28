@@ -46,7 +46,7 @@ First, we have to collect all transform files from helix modules. We can search 
 </None>
 ```
 
-In the future we can write Visual Studio plugin to do this or even better, we can extend SlowCheetah plugin, but for now, we have to open each *.csrpoj that contain transform file and modify it manually. 
+In the future we can write Visual Studio plugin to do this or even better, we can extend SlowCheetah plugin, but for now, we have to open each *.csproj that contains a transform file and modify it manually. 
 
 Next, we have to write a new target that will return files with `ApplyTransformOnPublish` set to `true`. The code can look like this:
 
@@ -72,7 +72,7 @@ Next, we have to write a new target that will return files with `ApplyTransformO
 
 In the `ItemDefinitionGroup` we set default value for all `<None>` items. I assumed that for transform files, the Build Action should be always set to `None`, because we don't want to treat them as content files and deploy, but this can be easily changed if needed.
 
-The `GetTransformFilesToApplyOnPublish` just gets all items from `_NoneWithTargetPath` list and include them into `_TransformFilesToApplyOnPublish` list if the `ApplyTransformOnPublish` is set to `true`. Then `_TransformFilesToApplyOnPublish` is returned by target. The target depends on `PrepareForBuild` and `AssignTargetPaths` because we need the `_NonewithTargetPath` to be populated before we use it.
+The `GetTransformFilesToApplyOnPublish` just gets all items from `_NoneWithTargetPath` list and includes them into `_TransformFilesToApplyOnPublish` list if the `ApplyTransformOnPublish` is set to `true`. Then `_TransformFilesToApplyOnPublish` is returned by target. The target depends on `PrepareForBuild` and `AssignTargetPaths` because we need the `_NonewithTargetPath` to be populated before we use it.
 
 The above code will extend our module projects, not the WebRoot project because we want to evaluate `_NoneWithTargetPaths` list that is collected for a module and not for a WebRoot. So, let's create a new **Helix.Module.targets** file and put above code into it. 
 
@@ -99,7 +99,7 @@ Inside `CollectTransformFilesToApplyOnPublish` add following code:
 </MSBuild>
 ```
 
-This code executes `GetTransformFilesToApplyOnPublish` target, that we created earlier, against all referenced projects. It aggregates results from all projects into a single item `TransformFilesToApplyOnPublish`
+This code executes `GetTransformFilesToApplyOnPublish` target, that we created earlier, against all referenced projects. It aggregates results from all projects into a single item `TransformFilesToApplyOnPublish`.
 
 You probably noticed `Properties` attribute on the MSBuild task. Inside we set `CustomBeforeMicrosoftCSharpTargets` property. It collects paths to all additional files that we want to import into a project before it's executed. Inside, we provided the path to **Helix.Module.targets** file we created earlier. This way, MSBuild is able to execute our custom target from inside module's project.
 
@@ -134,7 +134,7 @@ The final part of the `CollectTransformFilesToApplyOnPublish` is to calculate fi
 </ItemGroup>
 ```
 
-The code first includes all files that exist in publish directory but then removes a file from that list, if there is already a file in `FilesForPackaginFromProject` with the same `DestinationRelativePath`. If there is, that means we have that file in solution and it should not be copied form publish directory. At the end, the final list is included in FilesForPackagingFromProject. It is the same what we did in a [previous article]({% post_url 2018-10-18-how-to-extend-msbuild-publish-pipeline-to-copy-content-files-from-all-helix-modules-to-the-output %}) where we added all content files form helix modules to the `FilesForPackagingFromProject` list. Those files are then copied automatically to the package temporary directory and then published.
+The code first includes all files that exist in publish directory but then removes a file from that list, if there is already a file in `FilesForPackaginFromProject` with the same `DestinationRelativePath`. If there is, that means we have that file in the solution and it should not be copied from the publish directory. At the end, the final list is included in FilesForPackagingFromProject. It is the same as what we did in a [previous article]({% post_url 2018-10-18-how-to-extend-msbuild-publish-pipeline-to-copy-content-files-from-all-helix-modules-to-the-output %}) where we added all content files from helix modules to the `FilesForPackagingFromProject` list. Those files are then copied automatically to the package temporary directory and then published.
 
 Now, we have a list of transform files and all files we want to transform are copied to package temp directory. The last part is to actually apply transformations. This is done by the following target:
 
@@ -147,11 +147,11 @@ Now, we have a list of transform files and all files we want to transform are co
 </Target>
 ```
 
-As you can see, the target is set to run after `ScApplyWebTransforms` target. So we actually extending SlowCheetah here. Our target also depends on `CollectTransformFilesToApplyOnPublish` because we need a list of transform files first. Inside target, we execute only one task: `SlowCheetah.TransformTask`. The task is defined in SlowCheetah nuget package, so you have to install it into the WebRoot project. The `SlowCheetah.TransformTask` as a source and destination gets paths to the files that are in package temp directory. After that, the package is published to the publish directory.
+As you can see, the target is set to run after `ScApplyWebTransforms` target. So we are actually extending SlowCheetah here. Our target also depends on `CollectTransformFilesToApplyOnPublish` because we need a list of transform files first. Inside target, we execute only one task: `SlowCheetah.TransformTask`. The task is defined in SlowCheetah nuget package, so you have to install it into the WebRoot project. The `SlowCheetah.TransformTask` as a source and destination gets paths to the files that are in package temp directory. After that, the package is published to the publish directory.
 
 ### How to test it?
 
-In your own copy of Habitat, set `ApplyTransformOnPublish` metadata, install SlowCheetah in your WebRoot project, create Helix.Module.targets file and upate Helix.targets and then do the publish.
+In your own copy of Habitat, set `ApplyTransformOnPublish` metadata, install SlowCheetah in your WebRoot project, create Helix.Module.targets file and update Helix.targets and then do the publish.
 
 I committed all above changes into [this commit](https://github.com/bartlomiejmucha/Habitat/commit/a07d022937de29b15fcfe74f7d08ca4e393ce629) in my Habitat fork.
 

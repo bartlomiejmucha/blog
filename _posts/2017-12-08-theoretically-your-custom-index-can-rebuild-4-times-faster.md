@@ -1,7 +1,7 @@
 ---
 layout: post
 title: "Theoretically your custom index can rebuild 4 times faster"
-description: "It'a theoretical example of how much faster index rebuild can be if you exclude not nesesery fields."
+description: "It's a theoretical example of how much faster index rebuild can be if you exclude unnecessary fields."
 date: "2017-12-08 +0100"
 tags: [Sitecore, Sitecore 8.2 Update-3, Solr, Solr 6.1, Indexing, Performance]
 image:
@@ -92,9 +92,9 @@ Then I configured new index using the `thinSolrIndexConfiguration`. The config l
 </index>
 ```
 
-As you can see, there is only one template included (product template), and there is a list of excluded fields. Those are special Sitecore fields added by default to index, so I have to exclude them explicitly. For example, I excluded `_templatename` field because there is only one template indexed so I don't need that information to be repeated for each document in the index. In the end, you should decide for yourself which fields you really need in the index.
+As you can see, there is only one template included (product template), and there is a list of excluded fields. Those are special Sitecore fields added by default to the index, so I have to exclude them explicitly. For example, I excluded `_templatename` field because there is only one template indexed so I don't need that information to be repeated for each document in the index. In the end, you should decide for yourself which fields you really need in the index.
 
-For this example I only left a few fields like `_language`, `_latestversion`, `_name` and `_path`. There are also `_datasource` and `_indexname` fields left. Those two are used by Content Search Api, so if you exclude them, your LINQ queries will stop working because Sitecore by default filter by those two fields. It's probably in case you have all indexes in a single core.
+For this example I only left a few fields like `_language`, `_latestversion`, `_name` and `_path`. There are also `_datasource` and `_indexname` fields left. Those two are used by Content Search Api, so if you exclude them, your LINQ queries will stop working because Sitecore by default filters by those two fields. It's probably in case you have all indexes in a single core.
 
 The `_version_` field is added by Solr and `_uniqueid` field is set to required in `schema.xml` so I left them too. After a rebuild, the Solr document looks like this:
 
@@ -144,4 +144,4 @@ The original index configuration which inherits from the `defaultSolrIndexConfig
 
 ### The Results
 
-I rebuilt thin and original index three times on my local PC and on average it took **59 seconds** to rebuild the thin one and **228 seconds** to rebuild original one, so it's almost 4 times faster. It proves that you should put only the fields you really need into an index. The smaller index also eats less disk space, and it's easier to maintain.
+I rebuilt thin and original index three times on my local PC and on average it took **59 seconds** to rebuild the thin one and **228 seconds** to rebuild the original one, so it's almost 4 times faster. It proves that you should put only the fields you really need into an index. The smaller index also eats less disk space, and it's easier to maintain.

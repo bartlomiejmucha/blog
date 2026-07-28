@@ -8,7 +8,7 @@ tags: [Sitecore, Helix, MSBuild, Habitat, Gulp]
 image: /assets/images/posts/msbuild-series-small-logo.png
 categories: msbuild
 ---
-In this video I demonstrate difference in the speed of build and publish of Habitat solution between Gulp and MSBuild
+In this video I demonstrate the difference in the speed of build and publish of the Habitat solution between Gulp and MSBuild.
 
 If you like the video and want more, please let me know in comments and subscribe.
 

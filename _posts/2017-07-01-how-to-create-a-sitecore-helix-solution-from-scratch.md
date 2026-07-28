@@ -8,7 +8,7 @@ image: /assets/images/posts/005.006/sitecorehelix-small-ribbon.png
 ---
 You can create a new Sitecore helix solution in many ways:
 
-- You can duplicate habitat repository, clean it up and use it.
+- You can duplicate the habitat repository, clean it up and use it.
 - You can use [Power Shell script][powershell-script] to do that.
 - You can use [Yeoman][yeoman].
 - And of course, you can do it manually.

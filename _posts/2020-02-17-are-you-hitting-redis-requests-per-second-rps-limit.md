@@ -8,7 +8,7 @@ image:
 ---
 Azure [documentation for Redis](https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/cache-faq#azure-cache-for-redis-performance) contains a table with maximum bandwidth values observed for various sizes of the cache. It was collected using *redis-benchmark.exe* with 1-KB value size like it's described [here](https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/cache-faq#how-can-i-benchmark-and-test-the-performance-of-my-cache). So for example, for size C1 it is 38,000 RPS Non-SSL and 20,720 RPS SSL.
 
-These values are not hard upper limit, rather an estimation of what the underlying VM can handle. Meaning that once you have hit your limit, you are not automatically throttled or bound to it. It does mean that there is no guarantee high latency beyond that number of requests and any issues you have can escalate exponentially the more requests you perform beyond this limit.
+These values are not a hard upper limit, rather an estimation of what the underlying VM can handle. Meaning that once you have hit your limit, you are not automatically throttled or bound to it. It does mean that there is no guarantee high latency beyond that number of requests and any issues you have can escalate exponentially the more requests you perform beyond this limit.
 
 Also if your average key size is higher than 1-KB then Redis can handle fewer requests. Unfortunately, Microsoft does not provide numbers, but I did my own quick test using *redis-benchmark.exe* for different key values. I executed a benchmark only once for each key size and type (GET, SET) using Redis C1. Here are the results for SSL:
 
@@ -21,13 +21,13 @@ Size | SET | GET
 40-KB | 699 | 698
 {: .table .table-bordered .table-striped }
 
-The test results show that the higher key size, the fewer requests Redis can handle. The results show that on average if the key size is 10 times higher then the request limit is 10 times smaller. In other words, you can divide 1-KB RPS provided by Microsoft in the table by your average key size and you will get a number of requests for that key size.
+The test results show that the higher the key size, the fewer requests Redis can handle. The results show that on average if the key size is 10 times higher then the request limit is 10 times smaller. In other words, you can divide 1-KB RPS provided by Microsoft in the table by your average key size and you will get a number of requests for that key size.
 
 ### How to check if you are hitting the RPS limit?
 
 Azure Redis provides a metric that we can use for that. First, let's pick some point in time when you experienced some timeouts or just a high number of *Total Operations*.
 
-I had such a situation recently. Below images are from real project:
+I had such a situation recently. Below images are from a real project:
 
 ![Redis RPS total operations](/assets/images/posts/035/redis-rps-total-operations.png)
 

@@ -48,7 +48,7 @@ return
 
 I push `WIN+Z` and then type `rvs1` and hit `enter` then Visual Studio starts with an open project on which I work for a long time.
 
-The cool thing is that I set the script to run with elevated privileges, so all commands in it run with administrator rights. Thanks to this Visual Studio or hosts.etc file opens correctly.
+The cool thing is that I set the script to run with elevated privileges, so all commands in it run with administrator rights. Thanks to this, Visual Studio or hosts.etc file opens correctly.
 
 I encourage you to play with the AHK and read materials on the wiki because this tool is much more powerful than I show you here.
 

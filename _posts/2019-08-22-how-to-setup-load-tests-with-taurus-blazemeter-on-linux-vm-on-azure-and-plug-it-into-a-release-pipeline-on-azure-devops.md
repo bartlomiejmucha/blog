@@ -8,6 +8,6 @@ image: /assets/images/posts/031/how-to-setup-taurus-blazemeter-on-linux-vm-on-az
 ---
 I've found a great article written by my colleague about testing with Taurus: [https://blog.intive-fdv.com/taking-jmeter-tests-to-the-next-level-with-taurus/](https://blog.intive-fdv.com/taking-jmeter-tests-to-the-next-level-with-taurus/)
 
-I decided to set up such tests on Linux VM on Azure, and then execute them in our release pipeline and I recorded a video about it for you.
+I decided to set up such tests on a Linux VM on Azure, and then execute them in our release pipeline and I recorded a video about it for you.
 
 {% include youtube-embed.html url="https://www.youtube-nocookie.com/embed/ydzVIHPMPrs" %}

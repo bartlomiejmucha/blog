@@ -49,9 +49,9 @@ public class SitecoreAdaptiveSamplingTelemetryProcessor : AdaptiveSamplingTeleme
 }
 ```
 
-It inherits from original `AdaptiveSamplingTelemetryProcessor`. You also need to specify `ITelemetryProcessor` interface. Without it won't work.
+It inherits from the original `AdaptiveSamplingTelemetryProcessor`. You also need to specify the `ITelemetryProcessor` interface. Without it, it won't work.
 
-The `Process` method first checks if telemetry item is of `TraceTelemetry` type, then if it contains **AUDIT** in the message. If yes it goes to the next processor in the pipeline. If no, it executes the original adaptive sampling code.
+The `Process` method first checks if the telemetry item is of `TraceTelemetry` type, then if it contains **AUDIT** in the message. If yes it goes to the next processor in the pipeline. If no, it executes the original adaptive sampling code.
 
 The last thing we need to do is to remove original `AdaptiveSamplingTelemetryProcessor` from *ApplicationInsights.config* file and insert our own. We can do that using transform file:
 
@@ -74,4 +74,4 @@ traces
 | where itemCount > 1
 ```
 
-If `itemCount` is greater than `1` it means that log line has been sampled. The query above should return no results.
+If `itemCount` is greater than `1` it means that the log line has been sampled. The query above should return no results.

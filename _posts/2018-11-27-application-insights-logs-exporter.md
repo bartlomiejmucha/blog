@@ -18,7 +18,7 @@ I wrote a tool that just does that. It has three versions:
 
 ### The Tool
 
-To use the tool you have to generate REST API Key. Here is a [link to documentation](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/api/overview) where you can read how to do it. To see the source code and installation instructions go to my [GitHub repository](https://github.com/bartlomiejmucha/Application-Insights-Logs-Exporter).
+To use the tool you have to generate a REST API Key. Here is a [link to documentation](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/api/overview) where you can read how to do it. To see the source code and installation instructions go to my [GitHub repository](https://github.com/bartlomiejmucha/Application-Insights-Logs-Exporter).
 
 The standalone version of the tool:
 

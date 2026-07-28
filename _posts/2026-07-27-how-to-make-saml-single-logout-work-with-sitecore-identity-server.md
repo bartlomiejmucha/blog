@@ -3,7 +3,7 @@ layout: post
 title: "How to make SAML Single Logout work with a custom Sitecore Identity provider"
 description: "Adding a custom SAML identity provider to Sitecore Identity Server is described on the internet by others, but those guides stop at login. Here is the missing piece that makes logout (SAML Single Logout) actually work."
 date: "2026-07-27 +0100"
-tags: [Sitecore, Sitecore Identity, SAML, Sustainsys.Saml2]
+tags: [Sitecore, Sitecore 10.4.1, Sitecore Identity, SAML, Sustainsys.Saml2]
 ---
 ### Login is the easy part
 

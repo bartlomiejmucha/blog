@@ -8,11 +8,11 @@ tags: [Sitecore, Helix, MSBuild]
 image: /assets/images/posts/msbuild-series-small-logo.png
 categories: msbuild
 ---
-MSBuild offers a few ways you can extend build and publish process with your custom code. It's not a complete list but just a summary of the most useful techniques.
+MSBuild offers a few ways you can extend the build and publish process with your custom code. It's not a complete list but just a summary of the most useful techniques.
 
 ### Import
 
-This is the most common technique. You probably saw it many times in your .csproj file. This is how the new Class Library project looks like:
+This is the most common technique. You probably saw it many times in your .csproj file. This is what the new Class Library project looks like:
 
 ``` xml
 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
@@ -22,7 +22,7 @@ This is the most common technique. You probably saw it many times in your .cspro
 </Project>
 ```
 
-The project imports **Microsoft.Common.props** and **Microsoft.CSharp.targes**. There is a chain of nested imports, but at the end, this is where the `Clean`, `Build` and `Rebuild` targets are defined. You can add your own imports into .csproj file to load your custom code.
+The project imports **Microsoft.Common.props** and **Microsoft.CSharp.targets**. There is a chain of nested imports, but at the end, this is where the `Clean`, `Build` and `Rebuild` targets are defined. You can add your own imports into .csproj file to load your custom code.
 
 ### Import from Nuget package
 
@@ -39,9 +39,9 @@ You can read how I implemented `Unicorn.MSBuild` package in this article in [thi
 
 ### Directory.Build.props and Directory.Build.targets
 
-The **Directory.Build.props** and **Directory.Build.targest** are user-defined files that provide customisation to projects under a directory. If you put that files in your project location, the files will be loaded automatically. If the file is not there, MSBuild would search the directory structure upward until it locates the files.
+The **Directory.Build.props** and **Directory.Build.targets** are user-defined files that provide customisation to projects under a directory. If you put those files in your project location, the files will be loaded automatically. If the file is not there, MSBuild would search the directory structure upward until it locates the files.
 
-This is very useful if you want to set some properties or add some targets for your all projects, or projects under foundation folder for example.
+This is very useful if you want to set some properties or add some targets for all your projects, or projects under the foundation folder for example.
 
 ### .wpp.targets file
 
@@ -52,7 +52,7 @@ If you create a new Web Application project at the end of the file you will get 
 <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v10.0\WebApplications\Microsoft.WebApplication.targets" Condition="false" />
 ```
 
-One of these two lines will be executed, and it will import the **Microsoft.Web.Publishing.targets** file. This file then will try to import the `<projectname>.wpp.targets` file from the folder that holds your .csproj. The file settings and extensions defined there will be applied automatically to your all publishing profiles.
+One of these two lines will be executed, and it will import the **Microsoft.Web.Publishing.targets** file. This file then will try to import the `<projectname>.wpp.targets` file from the folder that holds your .csproj. The file settings and extensions defined there will be applied automatically to all your publishing profiles.
 
 ### I want more
 The best way to learn more is to read the official documentation. Here are a few interesting pages:

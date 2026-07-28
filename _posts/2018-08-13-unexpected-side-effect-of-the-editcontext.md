@@ -6,9 +6,9 @@ date: "2018-08-13 +0100"
 tags: [Sitecore, Sitecore 9.0 Update-2]
 image:
 ---
-Let's say you have two languages configured in Sitecore: EN and DE. Your `Product` template has versioned field `Title` and shared field `SKU`. The product can have only EN version, only DE version or both.
+Let's say you have two languages configured in Sitecore: EN and DE. Your `Product` template has a versioned field `Title` and a shared field `SKU`. The product can have only EN version, only DE version or both.
 
-Imagine that you have a product with only DE version and then for some reason you executed below code to change SKU. It's shared field, so it shouldn't matter if you edit it on the EN or DE language, right?.
+Imagine that you have a product with only DE version and then for some reason you executed below code to change SKU. It's a shared field, so it shouldn't matter if you edit it on the EN or DE language, right?
 
 ``` cs
 using (new LanguageSwitcher("en"))
@@ -66,7 +66,7 @@ private void EnsureVersion(Item item)
 
 The method does nothing when there already is any version or there are no changes or **all field changes are for shared fields**.
 
-So we should be good as we changed only `SKU` field and it's shared one?
+So we should be good as we changed only the `SKU` field and it's a shared one?
 
 ### NOPE!
 

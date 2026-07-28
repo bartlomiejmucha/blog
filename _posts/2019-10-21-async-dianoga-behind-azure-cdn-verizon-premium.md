@@ -8,9 +8,9 @@ image:
 ---
 Dianoga documentation says that behind CDN the optimized version of the image must be sent immediately (synchronously). That makes sense because you want the optimized version to be cached by CDN and then served to the front end users.
 
-However, asynchronous optimization has a huge advantage: front end visitors will get the uncompressed version of the image immediately, while the high intensive optimization process can be run in the background, and then after optimization is completed, new requests will get a compressed version of the image.
+However, asynchronous optimization has a huge advantage: front end visitors will get the uncompressed version of the image immediately, while the highly intensive optimization process can be run in the background, and then after optimization is completed, new requests will get a compressed version of the image.
 
-This is especially beneficial if you run your website on slow servers. I saw in one project which was run on Azure Standard (S2) tier, that Dianoga compression killed the server after fresh deployment. The server was unresponsive for 30 to 60 minutes. It was because of a slow CPU. The compression of single image took sometimes a few minutes. After scaling up to Premium (P1) tier it was much much better. That's why it is beneficial to store MediaCache in external location shared between slots or copy MediaCache from production slot to deployment slot in release pipeline as I described [here]({{ site.baseurl }}{% post_url 2019-01-23-how-to-copy-mediacache-from-prod-to-stage-slot-during-deployment-with-azure-devops %}).
+This is especially beneficial if you run your website on slow servers. I saw in one project which was run on Azure Standard (S2) tier, that Dianoga compression killed the server after a fresh deployment. The server was unresponsive for 30 to 60 minutes. It was because of a slow CPU. The compression of a single image took sometimes a few minutes. After scaling up to Premium (P1) tier it was much much better. That's why it is beneficial to store MediaCache in an external location shared between slots or copy MediaCache from production slot to deployment slot in release pipeline as I described [here]({{ site.baseurl }}{% post_url 2019-01-23-how-to-copy-mediacache-from-prod-to-stage-slot-during-deployment-with-azure-devops %}).
 
 A few months back I configured Azure CDN (Verizon Premium) for a website and managed to set up asynchronous Dianoga behind it.
 
@@ -18,13 +18,13 @@ The idea is to send the uncompressed version of the image immediately but set th
 
 The CDN will store the image internally according to the max-age set on the origin server. So the first request will result in storing an uncompressed version of the image for 2 minutes and CDN will serve that image to the front end users.
 
-It is very important to override max-age for the image on the CDN level to always serve it with the correct value (30 days) no matter if it's compressed or uncompressed because if the user already downloaded the image, there is no point to redownload compressed version again.
+It is very important to override max-age for the image on the CDN level to always serve it with the correct value (30 days) no matter if it's compressed or uncompressed because if the user already downloaded the image, there is no point to redownload the compressed version again.
 
 After 2 minutes, when a new request for the image comes, the CDN will revalidate its internal cache. It will do a request to the origin server again. If optimization is completed on the origin server, this time max-age should be set to a higher value (in my case it was 30 days).
 
 ### How to do it?
 
-To achieve this result, you need to do two things. First, you have to override `DoProcessRequest` method of `MediaRequstHandler` like this:
+To achieve this result, you need to do two things. First, you have to override the `DoProcessRequest` method of `MediaRequstHandler` like this:
 
 ``` cs
 public class DianogaMediaRequestHandler : Sitecore.Resources.Media.MediaRequestHandler
@@ -117,7 +117,7 @@ public class DianogaMediaRequestHandler : Sitecore.Resources.Media.MediaRequestH
 }
 ```
 
-Customization is bolded. The only change in `DoProcessRequest` method is the replacement of `SetMediaHeaders` to `SendTempOrCorrectMediaHeaders` in two places. The `SendTemporaryMediaHeaders` method works similar to `SetMediaHeaders` but it sets temporary values to *Last-Modified*, *ETag*, *Max-Age* and *Expires* headers.
+Customization is bolded. The only change in the `DoProcessRequest` method is the replacement of `SetMediaHeaders` with `SendTempOrCorrectMediaHeaders` in two places. The `SendTemporaryMediaHeaders` method works similarly to `SetMediaHeaders` but it sets temporary values to *Last-Modified*, *ETag*, *Max-Age* and *Expires* headers.
 
 Verizon CDN should work quite fine out of the box. I decided to use ADN so I had to add two rules in Rules Engine. The first rule enables caching for `/-/media/*` urls because by default cache is disabled for ADN:
 
@@ -127,4 +127,4 @@ Verizon CDN should work quite fine out of the box. I decided to use ADN so I had
 
  ![Rule 2](/assets/images/posts/033/rule-2.jpg)
 
- That's all folks. If you have any questions find me on twitter. Cheers
+ That's all folks. If you have any questions find me on Twitter. Cheers

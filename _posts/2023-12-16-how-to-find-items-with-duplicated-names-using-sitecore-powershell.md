@@ -17,7 +17,7 @@ Sitecore 10 introduced a new setting, that is set to `false` by default:
 <setting name="AllowDuplicateItemNamesOnSameLevel" value="false"/>
 ```
 
-If you migrated from Sitecore 8, or you had that setting set to `true`, you might have items with duplicated item names. If you like to find them and fix the names, here is a powershell script for you:
+If you migrated from Sitecore 8, or you had that setting set to `true`, you might have items with duplicated item names. If you would like to find them and fix the names, here is a powershell script for you:
 
 ``` powershell 
 $rootItem = Get-Item -Path 'master:/sitecore/content/home'

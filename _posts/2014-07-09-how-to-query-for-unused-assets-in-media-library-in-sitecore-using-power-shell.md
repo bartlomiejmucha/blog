@@ -6,7 +6,7 @@ date: "2014-07-09 +0100"
 tags: [Media Library, Sitecore, Sitecore PowerShell]
 image: /assets/images/posts/002.003/sitecore-powershell-console-small.png
 ---
-Too big database generates a lot of problems. It is increasingly difficult to backup the database because the backup process, compression an upload to - for example - FTP may take several hours. If you have additional specific requirements like to store backups from the last 7 days, last 6 Fridays, 4 last first Fridays of the month, then you need a lot of storage space.
+A too big database generates a lot of problems. It is increasingly difficult to backup the database because the backup process, compression and upload to - for example - FTP may take several hours. If you have additional specific requirements like to store backups from the last 7 days, last 6 Fridays, 4 last first Fridays of the month, then you need a lot of storage space.
 
 Below is a PowerShell script that you can use to search media library for unused items larger than 1MB. You can then ask the client to delete them.
 

@@ -32,7 +32,7 @@ write-host $stopwatch.Elapsed
 
 ### Performance
 
-On my test virtual machine, for 10,000 of items, the script executes from about an hour to one and a half hour. It is quite a lot of time if you want to insert a million of products. That is why I introduced two optimisations. Here they are:
+On my test virtual machine, for 10,000 items, the script executes from about an hour to one and a half hours. It is quite a lot of time if you want to insert a million products. That is why I introduced two optimisations. Here they are:
 
 ``` powershell
 cd master:\\content\home\products
@@ -66,7 +66,7 @@ write-host $stopwatch.Elapsed
 
 The use of the `BulkUpdateContext` forces Sitecore to not update index immediately after every save, but to do it later.
 
-By avoiding the use of cmdlet `Set-Property` for the direct Sitecore API calls, we managed to reduce the number of `BeginEdit()` and `EndEdit()` method calls three times, because `Set-Property` internally calls this methods every time.
+By avoiding the use of cmdlet `Set-Property` for the direct Sitecore API calls, we managed to reduce the number of `BeginEdit()` and `EndEdit()` method calls three times, because `Set-Property` internally calls these methods every time.
 
 Thanks to these optimisations I was able to reduce the time of inserting 10,000 items to about 25 minutes.
 

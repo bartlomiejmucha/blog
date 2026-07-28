@@ -22,17 +22,17 @@ Consider the following basic example:
 </Project>
 ```
 
-Copy and save it as a **Hello.csproj** file, then open **Developer Command Prompt for Visual Studio 2017** from Start menu or go to the MSBuild directory **C:\Program Files (x86)\Microsoft Visual Studio\2017\BuildTools\MSBuild** and open PowerShell there. Then execute the following command:
+Copy and save it as a **Hello.csproj** file, then open **Developer Command Prompt for Visual Studio 2017** from the Start menu or go to the MSBuild directory **C:\Program Files (x86)\Microsoft Visual Studio\2017\BuildTools\MSBuild** and open PowerShell there. Then execute the following command:
 
 `MSBuild.exe Hello.csproj /t:"Hello"`
 
 You should see the **MSBuild** says hello! message. The `/t:` parameter is the name of the target you want to run.
 
-You can think about a `Target` as a method or function. Target is a list of `Tasks` that are executed one by one in order. In the example above we created one target named Hello. It contains one `Task` named `Message`. The `Message` is a predefined task. There is plenty of other predefined tasks that you can use. You can also implement custom tasks using C#.
+You can think about a `Target` as a method or function. Target is a list of `Tasks` that are executed one by one in order. In the example above we created one target named Hello. It contains one `Task` named `Message`. The `Message` is a predefined task. There are plenty of other predefined tasks that you can use. You can also implement custom tasks using C#.
 
 ### Property
 
-Think of a `Property` as a string variable. Each property has to be inside `PropertyGroup`. You can have one or more `PropertyGroup` and one or more `Property` inside single group. The `PropertyGroup` is just a separator. Let's add one to our **Hello.csproj** file:
+Think of a `Property` as a string variable. Each property has to be inside `PropertyGroup`. You can have one or more `PropertyGroup` and one or more `Property` inside a single group. The `PropertyGroup` is just a separator. Let's add one to our **Hello.csproj** file:
 
 ``` xml
 <Project>
@@ -45,7 +45,7 @@ Think of a `Property` as a string variable. Each property has to be inside `Prop
 </Project>
 ```
 
-Now our `Hello` target displays message that is stored in `HelloMessage` property. We access that property using `$(<PropertyName>)`. There is also the additional advantage of using properties. You can set it's value in command line like this:
+Now our `Hello` target displays message that is stored in `HelloMessage` property. We access that property using `$(<PropertyName>)`. There is also the additional advantage of using properties. You can set its value in the command line like this:
 
 `MSBuild.exe Hello.csproj /t:"Hello" /p:HelloMessage="New Message"`
 
@@ -53,7 +53,7 @@ The value from command line will be used instead of the one from **Hello.csproj*
 
 ### Item
 
-Think of an `Item` as a list of objects. Each object can have `Metadata` and has to be inside `ItemGroup`. Similar like for `PropertyGroup` the `ItemGroup` is just a container. Thanks to this, you can have property and item with the same name. Let's update our *Hello.csproj*:
+Think of an `Item` as a list of objects. Each object can have `Metadata` and has to be inside `ItemGroup`. Similarly to `PropertyGroup`, the `ItemGroup` is just a container. Thanks to this, you can have property and item with the same name. Let's update our *Hello.csproj*:
 
 ``` xml
 <Project>
@@ -72,7 +72,7 @@ Think of an `Item` as a list of objects. Each object can have `Metadata` and has
 </Project>
 ```
 
-We added `FilesToList` property and we added `FilesToList` item. The name is the same however those are different things. We can access property with `$` and item with `@` or `%` if we want to get metadata. We also updated our `Hello` target. Now it displays two additional messages. The first one is the `FilesToList` item accessed with `@` and it displays a list of filenames joined by `;`. The second message is the same `FilesToList` item accessed with `%`. This time we get a list of `FullPath` of each file separated by new line.
+We added `FilesToList` property and we added `FilesToList` item. The name is the same however those are different things. We can access property with `$` and item with `@` or `%` if we want to get metadata. We also updated our `Hello` target. Now it displays two additional messages. The first one is the `FilesToList` item accessed with `@` and it displays a list of filenames joined by `;`. The second message is the same `FilesToList` item accessed with `%`. This time we get a list of `FullPath` of each file separated by a new line.
 
 You can find a list of Well-known Item Metadata [here](https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-well-known-item-metadata?view=vs-2022). You can also add your own `Metadata`.
 
@@ -246,19 +246,19 @@ Below you can see the content of a new Class Library project that I created in V
  </Project>
  ```
 
- We have three `PropertyGroup` and two `ItemGroup`. In the first `PropertyGroup` there is `Configuration` property. It has Condition attribute that directs MSBuild to set it's value to Debug only if it's empty. You can set configuration in Visual Studio when you do a build and in that case, Visual Studio will pass correct value to the `Configuration` property. The other two `PropertyGroup` also has conditions. This time, however, whole `PropertyGroup` will be executed or not. Have you noticed how the condition is concatenated to use two parameters?
+ We have three `PropertyGroup` and two `ItemGroup`. In the first `PropertyGroup` there is `Configuration` property. It has Condition attribute that directs MSBuild to set its value to Debug only if it's empty. You can set configuration in Visual Studio when you do a build and in that case, Visual Studio will pass the correct value to the `Configuration` property. The other two `PropertyGroup` also have conditions. This time, however, the whole `PropertyGroup` will be executed or not. Have you noticed how the condition is concatenated to use two parameters?
 
  ``` xml
  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
  ```
 
- It is similar to [interpolated string](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/tokens/interpolated) in C#
+ It is similar to an [interpolated string](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/tokens/interpolated) in C#.
 
-We also have two ItemGroup. We could, of course, put everything into single ItemGroup. It just separates two different lists. The first ItemGroup adds all project references into Reference list. The second one adds all files into Compile list. MSBuild will then use those properties and items to build your project.
+We also have two ItemGroup. We could, of course, put everything into a single ItemGroup. It just separates two different lists. The first ItemGroup adds all project references into Reference list. The second one adds all files into Compile list. MSBuild will then use those properties and items to build your project.
 
 ### Imports
 
-When you execute `Clean`, `Build` or `Rebuild` from Visual Studio you actually execute targets with the same name that are defined in **Microsoft.Common.targets** file. In the project above, there is `Import` line at the end. It loads **Microsoft.CSharp.targets** file that is located in the path stored in a `MSBuildToolsPath` property. This file contains bunch of other imports inside and **Microsoft.Common.targets** is between them.
+When you execute `Clean`, `Build` or `Rebuild` from Visual Studio you actually execute targets with the same name that are defined in **Microsoft.Common.targets** file. In the project above, there is `Import` line at the end. It loads **Microsoft.CSharp.targets** file that is located in the path stored in a `MSBuildToolsPath` property. This file contains a bunch of other imports inside and **Microsoft.Common.targets** is between them.
 
 Import is one of a few ways how you can extend MSBuild with your custom code. Read my next article in the series to find out more about this.
 

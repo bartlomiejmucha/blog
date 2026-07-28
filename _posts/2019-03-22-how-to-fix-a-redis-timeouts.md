@@ -10,19 +10,19 @@ If you have ever faced Redis timeouts issue, you probably know that there is no 
 
 ### 1. Burst of traffic
 
-In my opinion, this one is the most common reason and it's related to the way how ThreadPool is implemented in .NET. The ThreadPool provides two types of threads: Worker and IOCP. Each has defined minimum. By default, the minimum is set to the number of processors on a system. So for example on Azure P2v2 which has two cores, the minimum is set to 2.
+In my opinion, this one is the most common reason and it's related to the way ThreadPool is implemented in .NET. The ThreadPool provides two types of threads: Worker and IOCP. Each has a defined minimum. By default, the minimum is set to the number of processors on a system. So for example on Azure P2v2 which has two cores, the minimum is set to 2.
 
-ThreadPool provides new threads on demand until it reaches a minimum. Then it will throttle the rate at which it injects new threads to one thread per 500 milliseconds. The StackExchange.Redis has dedicated internal pool of threads, and if it's failing to keep up, additional work will be offered to the global ThreadPool.
+ThreadPool provides new threads on demand until it reaches a minimum. Then it will throttle the rate at which it injects new threads to one thread per 500 milliseconds. The StackExchange.Redis has a dedicated internal pool of threads, and if it's failing to keep up, additional work will be offered to the global ThreadPool.
 
-Redis exceptions contain useful information about a number of minimum and busy threads, for example:
+Redis exceptions contain useful information about the number of minimum and busy threads, for example:
 
 ```
 Timeout performing EVAL, inst: 187, mgr: Inactive, err: never, queue: 74, qu: 1, qs: 73, qc: 0, wr: 0, wq: 0, in: 65536, ar: 0, IOCP: (Busy=1,Free=999,Min=2,Max=1000), WORKER: (Busy=80,Free=32687,Min=2,Max=32767), clientName: RD281878737F80
 ```
 
-The number of busy worker threads is 80 and the minimum is set to 2. So 78 threads * 500 ms = 39s. 80th thread waited at least 39s to be created. This particular exception has been thrown because Redis operation waited too long for the free thread. Additionally, when a new thread is added to the ThreadPool, or existing one becomes free to process work, there is no guarantee that it will pick the Redis operation. It can pick the incoming ASP.NET request instead.
+The number of busy worker threads is 80 and the minimum is set to 2. So 78 threads * 500 ms = 39s. The 80th thread waited at least 39s to be created. This particular exception has been thrown because Redis operation waited too long for the free thread. Additionally, when a new thread is added to the ThreadPool, or existing one becomes free to process work, there is no guarantee that it will pick the Redis operation. It can pick the incoming ASP.NET request instead.
 
-For all these reasons, when application gets burst of traffic that needs more threads than the minimum, Redis can hit timeouts.
+For all these reasons, when the application gets a burst of traffic that needs more threads than the minimum, Redis can hit timeouts.
 
 #### Solution
 
@@ -32,7 +32,7 @@ Fortunately, Sitecore provided a [patch](https://kb.sitecore.net/articles/464570
 
 #### What values are correct?
 
-The Microsoft documentation recommends to set a minimum to 200 or 300 threads and then test and tweak as needed. These values are split across all cores. On the other hand, Sitecore's patch set's the minimum to 15 Worker threads per core and 10 IOCP threads per core. My preference is to use Sitecore's default and then tweak as needed.
+The Microsoft documentation recommends setting a minimum to 200 or 300 threads and then test and tweak as needed. These values are split across all cores. On the other hand, Sitecore's patch sets the minimum to 15 Worker threads per core and 10 IOCP threads per core. My preference is to use Sitecore's default and then tweak as needed.
 
 ### 2. High CPU
 
@@ -44,13 +44,13 @@ In our case, we scaled up the plan from S2 to P1V2 (which costs the same amount 
 
 ### 3. Bandwidth limit on Redis
 
-If you transfer a large number of data to and from Redis you can hit a bandwidth limit. Microsoft provides a [nice table](https://docs.microsoft.com/en-us/azure/azure-cache-for-redis/cache-faq#cache-performance) with observed bandwidth limit on a various pricing tiers. To see how many data is transferred to and from Redis, browse to your cache instance in the Azure portal, go to the Metrics blade and add two metrics: Cache Read and Cache Write with Sum aggregation.
+If you transfer a large amount of data to and from Redis you can hit a bandwidth limit. Microsoft provides a [nice table](https://docs.microsoft.com/en-us/azure/azure-cache-for-redis/cache-faq#cache-performance) with observed bandwidth limit on various pricing tiers. To see how much data is transferred to and from Redis, browse to your cache instance in the Azure portal, go to the Metrics blade and add two metrics: Cache Read and Cache Write with Sum aggregation.
 
 ![Redis cache read and write](/assets/images/posts/027/redis_cache_read_and_write.jpg)
 
 #### Solution
 
-The obvious solution is to scale your Redis up to have more bandwidth. Another solution is to review your application and check if you can store fewer data in Redis.
+The obvious solution is to scale your Redis up to have more bandwidth. Another solution is to review your application and check if you can store less data in Redis.
 
 #### Links
 

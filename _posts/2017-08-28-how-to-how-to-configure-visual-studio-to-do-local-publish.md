@@ -1,7 +1,7 @@
 ---
 layout: post
 title: "How to configure Visual Studio to do local publish"
-description: "I created a video where you can see how to configure Visual Studio do local publish."
+description: "I created a video where you can see how to configure Visual Studio to do local publish."
 date: "2017-08-28 +0100"
 tags: [Sitecore, Visual Studio, From Scratch]
 image: /assets/images/posts/005.006/sitecorehelix-small-ribbon.png

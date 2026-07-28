@@ -8,9 +8,9 @@ tags: [Sitecore, Helix, MSBuild]
 image: /assets/images/posts/msbuild-series-small-logo.png
 categories: msbuild
 ---
-After Build and Publish it's time to sync items with Unicorn. MSBuild can do that as well and extension is quite simple. Gulps script in Habitat repository, under the hood, executes the power shell script to sync items. The powershell contains a .NET code. We can write a custom `Task` that executes the same .NET code and new targets file that tells MSBuild how to use it.
+After Build and Publish it's time to sync items with Unicorn. MSBuild can do that as well and extension is quite simple. Gulp script in the Habitat repository, under the hood, executes the power shell script to sync items. The powershell contains .NET code. We can write a custom `Task` that executes the same .NET code and a new targets file that tells MSBuild how to use it.
 
-I put that `Task` and targets file into the [Unicorn.MSBuild](https://www.nuget.org/packages/Unicorn.MSBuild/) nuget package. When we install it in our WebRoot project, MSBuild automatically imports targets file from a package (similar like with the SlowCheetah in the [previous article]({% post_url 2018-10-24-how-to-extend-msbuild-publish-pipeline-to-apply-transform-files %})).
+I put that `Task` and targets file into the [Unicorn.MSBuild](https://www.nuget.org/packages/Unicorn.MSBuild/) nuget package. When we install it in our WebRoot project, MSBuild automatically imports the targets file from a package (similar to the SlowCheetah in the [previous article]({% post_url 2018-10-24-how-to-extend-msbuild-publish-pipeline-to-apply-transform-files %})).
 
 I also wrote the [Visual Studio plugin](https://marketplace.visualstudio.com/items?itemName=BartomiejMucha.SyncUnicorn) that adds Sync Unicorn button to the Build menu in Visual Studio. Thanks to this you can execute Sync with just two clicks.
 
@@ -58,7 +58,7 @@ It's copied from a NuGet package, that's why the `UnicornMSBuildTaskPath` proper
 
 Next, there is a `UsingTask` statement which tells MSBuild what is the class name of the task and what is the path to the assembly. 
 
-The last thing is the definition of a new target named `SyncUnicorn`. Inside we call our custom task (that has the same name). The values for `ControlPanelUrl` and `SharedSecret` are provided from `UnicornControlPanelUrl` and `UnicornSharedSecret` properties. We can define values for these properties somewhere in our project, for example in publishing profile, but the most convenient place I think is the **WebRoot.wpp.targets** file, because it's loaded for each publishing profiles.
+The last thing is the definition of a new target named `SyncUnicorn`. Inside we call our custom task (that has the same name). The values for `ControlPanelUrl` and `SharedSecret` are provided from `UnicornControlPanelUrl` and `UnicornSharedSecret` properties. We can define values for these properties somewhere in our project, for example in publishing profile, but the most convenient place I think is the **WebRoot.wpp.targets** file, because it's loaded for each publishing profile.
 
 ``` xml
 <Project>

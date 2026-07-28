@@ -8,11 +8,11 @@ image:
 ---
 ### A bit of theory, TL;DR;
 
-Images optimisation is the hot topic for me recently. Last week I debugged one issue related to media cache: for URL without a `?mw` parameter, an image was always served from a database even if a cache file existed inside the `MediaCache` folder. Obviously this, with Dianoga module (where image optimisation for some large images can take a few seconds) and a large number of visitors, can lead to performance problems.
+Image optimisation is a hot topic for me recently. Last week I debugged one issue related to media cache: for a URL without a `?mw` parameter, an image was always served from a database even if a cache file existed inside the `MediaCache` folder. Obviously this, with Dianoga module (where image optimisation for some large images can take a few seconds) and a large number of visitors, can lead to performance problems.
 
-It turned out that we have a processor inside the `getMediaStream` pipeline that was intended to resize image during upload if the image width is greater than some specified max width. The issue was tough to spot because it really looked like it works correctly: the width and height fields of a media item were set correctly during upload, and when you downloaded the image you could not get it larger than a max width (even without any parameters in URL). But it obviously didn’t work because when I turned the processor off, cleared the media cache folder and download the image again, I got it in full-size. We spotted that issue only because we installed Dianoga and saw in logs that for some images Dianoga adds lines every time you request an image.
+It turned out that we have a processor inside the `getMediaStream` pipeline that was intended to resize image during upload if the image width is greater than some specified max width. The issue was tough to spot because it really looked like it worked correctly: the width and height fields of a media item were set correctly during upload, and when you downloaded the image you could not get it larger than a max width (even without any parameters in URL). But it obviously didn’t work because when I turned the processor off, cleared the media cache folder and downloaded the image again, I got it in full-size. We spotted that issue only because we installed Dianoga and saw in logs that for some images Dianoga adds lines every time you request an image.
 
-When you upload the image to media library then an `uiUpload` pipeline is executed. Inside that pipeline, there is a `Sitecore.Pipelines.Upload.Save` processor and inside that processor, for each uploaded image (single or unpacked form zip) the `MediaCreator.CreateFromStream` method is executed:
+When you upload the image to the media library then an `uiUpload` pipeline is executed. Inside that pipeline, there is a `Sitecore.Pipelines.Upload.Save` processor and inside that processor, for each uploaded image (single or unpacked form zip) the `MediaCreator.CreateFromStream` method is executed:
 
 ``` cs
 public virtual Item CreateFromStream(Stream stream, string filePath, bool setStreamIfEmpty, MediaCreatorOptions options)
@@ -89,7 +89,7 @@ protected virtual void UpdateImageMetaData(MediaStream mediaStream)
 }
 ```
 
-As you can see the `UpdateImageMetaData` sets Width and Height of the image, but it does not use originally uploaded stream. Instead, it calls `GetImage` method which in the end tries to get an image from `MediaCache` folder or directly from Sitecore by calling the `getMediaStream` pipeline. That pipeline returned image transformed by MaxWidth parameter added by our custom processor I mentioned at the beginning. Width and Height fields were set from the size of the transformed image, not the original one. I looked correct during upload and when you requested image in the browser, but in the database, the stream with original size has been uploaded.
+As you can see the `UpdateImageMetaData` sets Width and Height of the image, but it does not use originally uploaded stream. Instead, it calls `GetImage` method which in the end tries to get an image from `MediaCache` folder or directly from Sitecore by calling the `getMediaStream` pipeline. That pipeline returned an image transformed by the MaxWidth parameter added by our custom processor I mentioned at the beginning. Width and Height fields were set from the size of the transformed image, not the original one. It looked correct during upload and when you requested the image in the browser, but in the database, the stream with original size has been uploaded.
 
 ### A Solution
 

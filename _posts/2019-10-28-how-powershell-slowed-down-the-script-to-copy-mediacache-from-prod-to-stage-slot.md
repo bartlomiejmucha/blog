@@ -8,7 +8,7 @@ image:
 ---
 **!!! Here is the link to the original article: [link]({{ site.baseurl }}{% post_url 2019-01-23-how-to-copy-mediacache-from-prod-to-stage-slot-during-deployment-with-azure-devops %}) !!!.**
 
-The original script works fine, however, when the MediaCache folder grows, it takes longer and longer to execute and at some point it starts throwing timeouts every time. To me, it was weird because downloading MediaCache locally worked very fast every time, (it was 30 minutes vs 1 minute locally). 
+The original script works fine, however, when the MediaCache folder grows, it takes longer and longer to execute and at some point it starts throwing timeouts every time. To me, it was weird because downloading MediaCache locally worked very fast every time (it was 30 minutes vs 1 minute locally). 
 
 My colleague wrote an article [How to expand archive with powershell](https://blog.senktas.net/2019/07/12/how-to-expand-archive-with-powershell/) where he compared performance between `[io.compression.zipfile]::ExtractToDirectory` and Powershell's `Expand-Archive` command. The conclusion was that `[io.compression.zipfile]::ExtractToDirectory` is much faster than the *Powershell* command.
 

@@ -6,18 +6,18 @@ date: "2016-08-24 +0100"
 tags: [Configuration Files, Sitecore]
 image: /assets/images/posts/004/appconfig-small.png
 ---
-Do you remember times when clean Sitecore installation had only a few config files inside Include folder?
+Do you remember times when a clean Sitecore installation had only a few config files inside the Include folder?
 For example Sitecore 6.4 rev. 120113 has only 10 files and only one file has a *.config extension so only one will be processed.
 
 ![Sitecore 6.4 rev. 120113 include folder](/assets/images/posts/004/sitecore-6.4-rev.-120113-include-folder.png)
 
-For comparison: Include folder in the latest version of Sitecore: 8.1 upd3 has 189 files (including files in subfolders).
+For comparison: the Include folder in the latest version of Sitecore: 8.1 upd3 has 189 files (including files in subfolders).
 
 ### Why is this a problem?
 
 You probably experienced an issue where your custom configuration was overwritten by default Sitecore files. You probably fixed that by adding "Z." prefix to your file name and then your file was processed as a last one.
 
-By default Sitecore process configuration files in alphabetical order. Next, it processes subfolders in alphabetical order. Files inside subfolders are also processed in alphabetical order.
+By default Sitecore processes configuration files in alphabetical order. Next, it processes subfolders in alphabetical order. Files inside subfolders are also processed in alphabetical order.
 
 ![Sitecore patch files load order](/assets/images/posts/004/sitecore-patch-files-load-order.png)
 
@@ -25,18 +25,18 @@ By default Sitecore process configuration files in alphabetical order. Next, it 
 
 When you organise your custom configuration files in the right way it will give you two advantages:
 
-- It will be easier to upgrade project in the feature because all your custom configurations will be placed in your custom files. You will not change any of original Sitecore files so you will be able to just copy and paste them from installation zip during the upgrade. No need to manually apply all config changes.
+- It will be easier to upgrade the project in the future because all your custom configurations will be placed in your custom files. You will not change any of original Sitecore files so you will be able to just copy and paste them from installation zip during the upgrade. No need to manually apply all config changes.
 - Your configuration will be processed in correct order. Ideally, we want the default Sitecore configuration files (and all default module files) to be processed first, and then apply our customisations on top of this.
 
 ### How I organized my config files
 
-Recently I was working on upgrading project to latest Sitecore version and one of the first thing that I did was moving all config customisations to separate files.
+Recently I was working on upgrading a project to the latest Sitecore version and one of the first things that I did was moving all config customisations to separate files.
 
 First I created my subfolder:
 
 ![My z.WebsiteConfig folder](/assets/images/posts/004/sitecore-my-zwebsiteconfig-folder.png)
 
-I called it `Z.WebsiteConfig`. Thanks to this files from inside that folder will be processed as a last one. All default Sitecore config files (module's files too) will be processed first. And my config files will add customisations on top of this.Inside Z.WebsiteConfig folder I tried to recreated structure similar to default Sitecore config structure.
+I called it `Z.WebsiteConfig`. Thanks to this, files from inside that folder will be processed as a last one. All default Sitecore config files (module's files too) will be processed first. And my config files will add customisations on top of this. Inside Z.WebsiteConfig folder I tried to recreate a structure similar to default Sitecore config structure.
 
 ![Content of my own custom configuration subfolder](/assets/images/posts/004/content-of-my-own-custom-config-folder.png)
 
@@ -46,7 +46,7 @@ My aim is to have the individual file that corresponds to the original Sitecore 
 It corresponds to original Commands.config file. I added my custom command here.
 
 #### Sitecore.config
-It also corresponds to original Sitecore.config file. For example, I added a patch for InstanceName here
+It also corresponds to original Sitecore.config file. For example, I added a patch for InstanceName here.
 
 #### Prefetch folder
 
@@ -78,11 +78,11 @@ This file does not correspond to Sitecore config file but to ASP.NET config file
 
 #### Sitecore.Environment.config
 
-Here I have settings that should be changed based on hosting environment. For example, website hostname is different on production and different on developers machine.
+Here I have settings that should be changed based on hosting environment. For example, website hostname is different on production and different on developer's machine.
 
 #### Z.Developer folder
 
-This is the last piece. Files inside that folder will be parsed at the end so you can override any setting with that file. This files should not be deployed to live servers. This folder looks like this:
+This is the last piece. Files inside that folder will be parsed at the end so you can override any setting with that file. These files should not be deployed to live servers. This folder looks like this:
 
 ![Inside include folder](/assets/images/posts/004/inside-zdevelopers-folder.png)
 

@@ -3,7 +3,7 @@ layout: post
 title: "How to install XM0 with Installation Assistant"
 description: "The SitecoreInstallation Assistant for XM Scaled installs CM and CD as two separate sites. If all you need for local development is a single standalone instance, here is how to turn that install into XM0."
 date: "2026-03-13 +0100"
-tags: [Sitecore, SIF, Installation]
+tags: [Sitecore, Sitecore 10.4.1, SIF, Installation]
 ---
 ### Why XM0?
 

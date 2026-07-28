@@ -10,9 +10,9 @@ This is a real case study. You built a beautiful website and it works great when
 
 ### The analysis
 
-The site is hosted on Azure in the West Europe region, so if someone does a request to a page from Argentina then the request has to travel through the ocean for dynamic content. Static content is served through the CDN subdomain. Additionally site displays a number of images and a video on a homepage that loads at the end. On the slow internet connection, it will take much time to load all assets.
+The site is hosted on Azure in the West Europe region, so if someone does a request to a page from Argentina then the request has to travel through the ocean for dynamic content. Static content is served through the CDN subdomain. Additionally, the site displays a number of images and a video on the homepage that loads at the end. On the slow internet connection, it will take much time to load all assets.
 
-This is how the waterfall and connection view looks like for the homepage:
+This is how the waterfall and connection view looks for the homepage:
 
 ![Waterfall and connection views before optimisations](/assets/images/posts/029/waterfall-and-connection-views-before-optimisations.png)
 
@@ -24,19 +24,19 @@ The connection time is split into a few parts:
 
 - DNS lookup time (browser tries to resolve hostname like www.example.com to an IP address of the web server),
 - Initial connection time (browser initiates a connection to the server),
-- SSL Negotiation (browser and the server selects TLS version, cipher, and exchange certificate),
+- SSL Negotiation (browser and the server select TLS version, cipher, and exchange certificate),
 - Wait time (time to the first byte),
-- Download time (how long it takes to actually download a content).
+- Download time (how long it takes to actually download content).
 
 On the diagram above, I highlighted a few important parts:
 
-**#1**: The first request. It goes directly, through the ocean, to the web server in Europe. DNS lookup + Initial connection + SSL Negotiation takes about 0,5s, then browser waits 398ms for the first byte, and it takes 1ms to actually download the content. As you can see it takes more time to initiate the connection than to actually download a content. In this example, the DNS lookup time is 35ms. It is low because I ran that test previously and lookup results have been cached somewhere on the servers. But in the case when the browser actually has to resolve the domain, I often saw additional 0,5s to even 1,5s for the DNS lookup time.
+**#1**: The first request. It goes directly, through the ocean, to the web server in Europe. DNS lookup + Initial connection + SSL Negotiation takes about 0,5s, then the browser waits 398ms for the first byte, and it takes 1ms to actually download the content. As you can see it takes more time to initiate the connection than to actually download content. In this example, the DNS lookup time is 35ms. It is low because I ran that test previously and lookup results have been cached somewhere on the servers. But in the case when the browser actually has to resolve the domain, I often saw additional 0,5s to even 1,5s for the DNS lookup time.
 
-**#2**: It's the first request to a CDN subdomain. The browser has to instantiate separate connection for that subdomain. It has to do a DNS lookup for the CDN subdomain, Initial Connection and then SSL Negotiation. The CDN has POPs in Argentina so the whole process was much quicker, but keep in mind that it can vary between tests.
+**#2**: It's the first request to a CDN subdomain. The browser has to instantiate a separate connection for that subdomain. It has to do a DNS lookup for the CDN subdomain, Initial Connection and then SSL Negotiation. The CDN has POPs in Argentina so the whole process was much quicker, but keep in mind that it can vary between tests.
 
-**#3**: The number of images that eats transfer. Those are PNG files. They are lossless optimized by Dianoga, but still, in total, they weight about 2,5MB.
+**#3**: The number of images that eats transfer. Those are PNG files. They are lossless optimized by Dianoga, but still, in total, they weigh about 2,5MB.
 
-**#4**: Requests to external resources like facebook and google analytics. The browser has to create a new connection for each one, and as you can see, sometimes it can take a lot of time to instantiate it.
+**#4**: Requests to external resources like Facebook and Google Analytics. The browser has to create a new connection for each one, and as you can see, sometimes it can take a lot of time to instantiate it.
 
 **#5**: This one is really interesting. The browser had to open a new connection to the CDN subdomain to download the fonts. It did that because fonts are loaded from a subdomain and in that case the connection has to be anonymous. The DNS lookup time was 0ms this time, but Connect and SSL took almost 1s. Another issue is that fonts are loaded late, after CSS and images.
 
@@ -50,19 +50,19 @@ Here are three things that are already implemented, that's why the benefits of t
 
 The main benefit of the HTTP/2 is that the browser will initiate only one persistent connection per domain and will download all resources through that connection. You will save a lot of time on Connect and SSL Negotiation.
 
-Because it is already enabled on our App Service and CDN, all images, scripts, styles and even mp4 file at the end is downloaded without additional Connect and SSL Negotiation time.
+Because it is already enabled on our App Service and CDN, all images, scripts, styles and even the mp4 file at the end are downloaded without additional Connect and SSL Negotiation time.
 
 Take a look at the picture below. It's from some random website on the internet that doesn't use HTTP/2:
 
 ![Website without http2](/assets/images/posts/029/website-without-http2.png)
 
-Each CSS file in that red area comes from the same domain. The first one did a DNS lookup and each next ones did Connect and SSL Negotiation. Also check out this video that shows how HTTP/2 speeds up the site on the slow internet connection: [https://www.youtube.com/watch?time_continue=8&v=QCEid2WCszM](https://www.youtube.com/watch?time_continue=8&v=QCEid2WCszM)
+Each CSS file in that red area comes from the same domain. The first one did a DNS lookup and each of the next ones did Connect and SSL Negotiation. Also check out this video that shows how HTTP/2 speeds up the site on the slow internet connection: [https://www.youtube.com/watch?time_continue=8&v=QCEid2WCszM](https://www.youtube.com/watch?time_continue=8&v=QCEid2WCszM)
 
 #### #2 Compress (Gzip) content
 
-You can save a lot of transfer by enabling Gzip for dynamic and static content. All text files like HTML, CSS, JS, JSON, SVG are great candidates for compression. Other good candidates for compression are icon files (like favicon) and fonts with old formats (TTS, EOT, OTF). The WOFF and WOFF2 fonts are already compressed that's why there is no benefit in additional Gzip compression. Similarly, you don't need to Gzip images, audio, and video, as these formats are also already compressed.
+You can save a lot of transfer by enabling Gzip for dynamic and static content. All text files like HTML, CSS, JS, JSON, SVG are great candidates for compression. Other good candidates for compression are icon files (like favicon) and fonts with old formats (TTF, EOT, OTF). The WOFF and WOFF2 fonts are already compressed that's why there is no benefit in additional Gzip compression. Similarly, you don't need to Gzip images, audio, and video, as these formats are also already compressed.
 
-In the default configuration of IIS 10 and App Service, the Gzip is enabled by default for most important files, so you don't have to do anything else. In my case, I additionally enabled Gzip for icons and old font formats. Here is a config patch:
+In the default configuration of IIS 10 and App Service, the Gzip is enabled by default for the most important files, so you don't have to do anything else. In my case, I additionally enabled Gzip for icons and old font formats. Here is a config patch:
 
 ``` xml
 <httpCompression xdt:Transform="Insert">
@@ -86,7 +86,7 @@ In the default configuration of IIS 10 and App Service, the Gzip is enabled by d
 
 Additionally, I wanted to change `staticCompressionIgnoreHitFrequency` to `True` to tell IIS to ignore hit frequency and compress each file on the first request. This attribute is locked and can't be changed in Web.config but there is a way to change it. To do that I created an *applicationHost.xdt* transform file and uploaded it to the site folder on App Service, then I had to restart the site and that's it.
 
-I also changed `minFileSizeForComp` to 900 bytes (default is 2700 bytes) so the favicon can be compressed. Here is how *applicationHost.xdt* looks like:
+I also changed `minFileSizeForComp` to 900 bytes (default is 2700 bytes) so the favicon can be compressed. Here is how *applicationHost.xdt* looks:
 
 ``` xml
 <?xml version="1.0"?>
@@ -102,7 +102,7 @@ I also changed `minFileSizeForComp` to 900 bytes (default is 2700 bytes) so the 
 
 CDN is great. CDN providers have servers in strategic location across the globe (POP - Point of Presence), that's why when the browser does a request it can Connect, Negotiate SSL and Download content much faster. There is a site that compares the performance of CDNs: [https://www.cdnperf.com/](https://www.cdnperf.com/).
 
-At the diagram above, the first request is made to the App Service in Europe. It took about 0,5s to Connect and Negotiate SSL. On the other hand, it took 37ms to Connect and Negotiate SSL for the CDN subdomain. 
+On the diagram above, the first request is made to the App Service in Europe. It took about 0,5s to Connect and Negotiate SSL. On the other hand, it took 37ms to Connect and Negotiate SSL for the CDN subdomain. 
 
 ### The improvements I made
 
@@ -122,7 +122,7 @@ This is how the waterfall and connection view looked after that change:
 
 #### #5 Enable DSA
 
-Some premium CDNs have a future to accelerate dynamic site content. For Azure CDN it is called DSA.
+Some premium CDNs have a feature to accelerate dynamic site content. For Azure CDN it is called DSA.
 
 In short words, the request for dynamic content (that is not cached) goes to your origin server through an optimized route. CDN chooses the most optimal path to the origin server. Additionally CDN reuses existing TCP connection for multiple HTTP requests to save round-trip times and do some other optimizations. As a result, the dynamic content is delivered more quickly and more reliably to end users.
 
@@ -167,7 +167,7 @@ Read more:
 
 Modern browsers have the ability to display WebP format of images. According to Google, it has 20-30% better compression than JPEG. I confirmed that during local tests and I also found out that our PNGs are compressing even much better, like 5x-10x (with a Lossy compression with a quality set to 85%).
 
-In the projects we use Dianoga and it has a feature that adds support for WebP format. If a browser has support for WebP format it sends that information in the Accept header and Dianoga can check that header, and it will compress the image to WebP format and returns it instead of JPEG, PNG or GIF.
+In the projects we use Dianoga and it has a feature that adds support for WebP format. If a browser has support for WebP format it sends that information in the Accept header and Dianoga can check that header, and it will compress the image to WebP format and return it instead of JPEG, PNG or GIF.
 
 During local testing, I did some changes and improvements to that feature and packed them into [this PR](https://github.com/kamsar/Dianoga/pull/54).
 
@@ -191,23 +191,23 @@ It tells CDN to have a separate copy of resource depending on the Accept header.
 
  Our 2,5MB of images on the homepage has been compressed to 0,5MB! Nice.
 
-#### #8 Use Brotli instead of Gzip for browsers that supports it
+#### #8 Use Brotli instead of Gzip for browsers that support it
 
-Brotli is a compression algorithm developed by Google. It compresses about 20% better than GZip. Unfotunteally IIS and App Service does not support it out of the box, but we can add support for Brotli with [that extension](https://github.com/shibayan/IIS.Compression.SiteExtension).
+Brotli is a compression algorithm developed by Google. It compresses about 20% better than GZip. Unfortunately IIS and App Service do not support it out of the box, but we can add support for Brotli with [that extension](https://github.com/shibayan/IIS.Compression.SiteExtension).
 
-The server sends Vary: Accept-Encoding header with each response and thanks to this CDN can serve different content (with different compression) depending on what user's browser support. Thank's to this I didn't have to configure anything else on the CDN (in contrast to webp support above).
+The server sends Vary: Accept-Encoding header with each response and thanks to this CDN can serve different content (with different compression) depending on what the user's browser supports. Thanks to this I didn't have to configure anything else on the CDN (in contrast to webp support above).
 
-On the homepage, the content (HTML, CSS, JS, ICO, SVG and old TTF fonts) transferred with GZip compression weight 512KB and with Brotli compression weight 282KB. It's almost 2x less.
+On the homepage, the content (HTML, CSS, JS, ICO, SVG and old TTF fonts) transferred with GZip compression weigh 512KB and with Brotli compression weigh 282KB. It's almost 2x less.
 
-Here is how the diagram looked like with Brotli enabled:
+Here is how the diagram looked with Brotli enabled:
 
 ![Waterfall and connection with brotli](/assets/images/posts/029/waterfall-and-connection-with-brotli.jpg)
 
 #### #9 Optimize font loading on the site
 
-Fonts are critical to your site. Without fonts, the text is not visible. For example, Chrome and Firefox hide text for 3 seconds and wait for fonts. After 3 seconds they use system fonts and then swaps them after they are ready.
+Fonts are critical to your site. Without fonts, the text is not visible. For example, Chrome and Firefox hide text for 3 seconds and wait for fonts. After 3 seconds they use system fonts and then swap them after they are ready.
 
-Fonts have higher priority than images that's why should be loaded earlier. Unfortunately, the browser has to download and parse CSS files to find out which font's are needed and then will start to download them.
+Fonts have higher priority than images, that's why they should be loaded earlier. Unfortunately, the browser has to download and parse CSS files to find out which fonts are needed and then will start to download them.
 
 If we know for sure that we need some fonts we can tell the browser to preload them, like this:
 
@@ -236,7 +236,7 @@ There are other things that can be done. If I do any of these, I will update the
 
 #### #10 Use premium DNS
 
-This is how you can improve DNS Lookup times. Premium DNS provider will have more servers across Globe that will respond faster. It also offers some Premium features like CNAME Flattening.
+This is how you can improve DNS Lookup times. Premium DNS provider will have more servers across the globe that will respond faster. It also offers some Premium features like CNAME Flattening.
 
 To compare the performance of the different DNS you can use this site: [https://www.dnsperf.com](https://www.dnsperf.com)
 
@@ -244,15 +244,15 @@ To compare the performance of the different DNS you can use this site: [https://
 
 When you buy a new domain in one provider, you often have the ability to delegate the DNS zone of that domain to a different provider. It is done by setting NS records for your domain on the "com" DNS zone.
 
-When the request to the "www.example.com" is done, first the "com" DNS zone is requested to check the NS record for "exmaple.com". Then the request goes to the DNS server that is pointed by that NS records. This is your DNS zone. Here you can have an A record for "www.example.com" that will directly point to the IP address of the server, or you can have CNAME record that will point to another name like "example.azureedge.com". In the second case, the whole process starts again. The request is made "com" DNS zone to check NS records for "azureedge.com" and so on.
+When the request to the "www.example.com" is done, first the "com" DNS zone is requested to check the NS record for "example.com". Then the request goes to the DNS server that is pointed by that NS records. This is your DNS zone. Here you can have an A record for "www.example.com" that will directly point to the IP address of the server, or you can have CNAME record that will point to another name like "example.azureedge.com". In the second case, the whole process starts again. The request is made to the "com" DNS zone to check NS records for "azureedge.com" and so on.
 
-After the whole chain is resolved, the results can be cached on the user PC according to the TTL configured on the DNS records. If you have long CNAME chain it can significantly increase DNS Lookup times. That's why it's preferable to use A records that directly points to the IP of the server.
+After the whole chain is resolved, the results can be cached on the user PC according to the TTL configured on the DNS records. If you have a long CNAME chain it can significantly increase DNS Lookup times. That's why it's preferable to use A records that directly point to the IP of the server.
 
-Some DNS providers have futures that can help with CNAME chains. For example, Azure DNS allows to add ALIAS records and CloudFlare has CNAME Flattening feature. Thanks to this CNAME records will be resolved (and updated according to the TTL) internally by DNS provider and when the client asks for the "www.example.com" it will receive A record instead.
+Some DNS providers have features that can help with CNAME chains. For example, Azure DNS allows to add ALIAS records and CloudFlare has CNAME Flattening feature. Thanks to this CNAME records will be resolved (and updated according to the TTL) internally by DNS provider and when the client asks for the "www.example.com" it will receive A record instead.
 
 #### #12 Set optimal TTL for DNS records
 
-Time to Live (TTL) represents how long each step of the DNS resolution chain can be cached. In other word, how long to keep this DNS record in the cache. It's usually represented in seconds. If you set a TTL to a 60s, then the client will have to do a DNS Lookup every 60s.
+Time to Live (TTL) represents how long each step of the DNS resolution chain can be cached. In other words, how long to keep this DNS record in the cache. It's usually represented in seconds. If you set a TTL to a 60s, then the client will have to do a DNS Lookup every 60s.
 
 In my opinion, it's a good idea to set CNAME records for 24h and A records to between 5 and 60 minutes
 

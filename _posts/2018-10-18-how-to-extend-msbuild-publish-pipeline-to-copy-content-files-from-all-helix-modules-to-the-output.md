@@ -14,7 +14,7 @@ It's possible to drastically speed up this process by extending MSBuild to publi
 
 ### WebRoot project
 
-We need to pick one project that we want to extend with our MSBuild customisations. This can be a project from your Project layer. However, I think that the best option is to create a new project outside of your layer folders and name it **WebRoot**. It's only responsibility is to build and publish the solution.
+We need to pick one project that we want to extend with our MSBuild customisations. This can be a project from your Project layer. However, I think that the best option is to create a new project outside of your layer folders and name it **WebRoot**. Its only responsibility is to build and publish the solution.
 
 So, let's create a new Web Application project under src folder. By doing this you should get four folders under src folder: Foundation, Feature, Project and WebRoot. Then in the WebRoot directory, create a **Helix.targets** file, open WebRoot.csproj file and add the following Import:
 
@@ -86,7 +86,7 @@ It depends on targets defined in `PipelineCollectFilesPhaseDependsOn` property. 
 
 Now, our custom target `CollectContentFilesFromHelixModules` will be executed as a last one in the list but before the `PipelineCollectFilesPhase` target.
 
-In **Microsoft.Common.CurrentVersion.targets** there is `ContentFilesProjectOutputGroup` target. It returns a list of all files that has Build Action set to Content. We want to get exactly that list for each module to include these files in another list `FilesForPackagingFromProject` which stores all files that are going to be published.
+In **Microsoft.Common.CurrentVersion.targets** there is `ContentFilesProjectOutputGroup` target. It returns a list of all files that have Build Action set to Content. We want to get exactly that list for each module to include these files in another list `FilesForPackagingFromProject` which stores all files that are going to be published.
 
 To execute that target for each module and collect results, we can use code below:
 
@@ -96,7 +96,7 @@ To execute that target for each module and collect results, we can use code belo
 </MSBuild>
 ```
 
-You remember, that inside `ProjectReference` item we have a list of all referenced projects in our WebRoot project. We pass that list to Projects attribute. Then into Targets attribute we pass the name of the target we want to execute. Additionally, we set `BuildInParallel` attribute to the defaults defined in VisualStudio. You probably noticed the Output element as well. It says that we want to a store list returned by the MSBuild task into a new item named `_ContentFilesFromHelixModules`. The results from all projects will be merged to that item.
+You remember, that inside `ProjectReference` item we have a list of all referenced projects in our WebRoot project. We pass that list to Projects attribute. Then into Targets attribute we pass the name of the target we want to execute. Additionally, we set `BuildInParallel` attribute to the defaults defined in VisualStudio. You probably noticed the Output element as well. It says that we want to store a list returned by the MSBuild task into a new item named `_ContentFilesFromHelixModules`. The results from all projects will be merged to that item.
 
 Now, as the last step, we need to add files from our `_ContentFilesFromHelixModules` item to the list of files for publishing. The name of that list is `FilesForPackagingFromProject`. We can do that with the following code:
 
@@ -137,7 +137,7 @@ This is how the Helix.targets file can look at the end:
 
 ### How to test it?
 
-Create a **WebRoot** project and **Helix.targets** file, import Helix.targets inside WebRoot.csproj. Don't forget to add modules as project references in WebRoot project, set Build Actionfor Web.config to None, create (or copy) publishing profile and try to do a publish to a new location on your disk. You should see all content files from your all referenced modules as well as all required dlls in the bin folder.
+Create a **WebRoot** project and **Helix.targets** file, import Helix.targets inside WebRoot.csproj. Don't forget to add modules as project references in WebRoot project, set Build Action for Web.config to None, create (or copy) publishing profile and try to do a publish to a new location on your disk. You should see all content files from your all referenced modules as well as all required dlls in the bin folder.
 
 There is one more thing. Convert your WebRoot project to use PackageReference instead of packages.config. If you don't do that indirect references from referenced projects will not be published, but this is a topic for another time.
 

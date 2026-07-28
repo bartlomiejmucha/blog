@@ -6,7 +6,7 @@ date: "2018-01-22 +0100"
 tags: [Sitecore, Sitecore 8.2 Update-3, Memory, Internig, Performance]
 image: /assets/images/posts/012/memory-consumption-over-time-small.jpg
 ---
-If you host your application on 64 bits environment and if you have a lot of RAM then you can consider disabling cache size limits by changing this setting:
+If you host your application on a 64-bit environment and if you have a lot of RAM then you can consider disabling cache size limits by changing this setting:
 
 ``` xml
 <!--  CACHING - DISABLE CACHE SIZE LIMITS
@@ -35,11 +35,11 @@ Following is the real world example from one of my projects. I restarted the app
 
 ![Memory consumption after smart publish](/assets/images/posts/012/memory-consumption-after-smart-publish.jpg)
 
-Here is another print screen from dotMemory. Snapshots have been taken after application restart but before smart publish, then after 53k, 104k, 151k published elements. As you can see the number of objects stored in memory increase about 4,5M for every 50k published elements:
+Here is another print screen from dotMemory. Snapshots have been taken after application restart but before smart publish, then after 53k, 104k, 151k published elements. As you can see the number of objects stored in memory increases about 4,5M for every 50k published elements:
 
 ![Memory snapshot comparison from dotmemory](/assets/images/posts/012/memory-snapshot-comparison-from-dot-memory.jpg)
 
-Below is the screenshot of the details of "after 151k" snapshot. The memory is used mostly by three `SqlServerDataProvider` objects. Those three objects are for three Sitecore databases: core, master and web. There is also a lot of wasted memory by duplicated string values. For example, if you have 1M product items and half of them is in Approved workflow state and other half is in Draft state, then the IDs of those two workflow states can be duplicated by 0,5M times for each one.
+Below is the screenshot of the details of "after 151k" snapshot. The memory is used mostly by three `SqlServerDataProvider` objects. Those three objects are for three Sitecore databases: core, master and web. There is also a lot of wasted memory by duplicated string values. For example, if you have 1M product items and half of them is in Approved workflow state and the other half is in Draft state, then the IDs of those two workflow states can be duplicated by 0,5M times for each one.
 
 ![Memory snapshot details](/assets/images/posts/012/memory-snapshot-details.jpg)
 
@@ -47,7 +47,7 @@ Fortunately, there are out of the box ways to improve memory consumption in **Si
 
 ### #1 Enable Sitecore.Interning
 
-Following setting enables interning mechanisms that should reduce memory consumption. This is done by reusing immutable objects like strings or IDs instead of creating new ones:
+The following setting enables interning mechanisms that should reduce memory consumption. This is done by reusing immutable objects like strings or IDs instead of creating new ones:
 
 ``` xml
 <!-- INTERNING ENABLED
@@ -59,7 +59,7 @@ Following setting enables interning mechanisms that should reduce memory consump
 <setting name="Interning.Enabled" value="false"/>
 ```
 
-Additionally, you can enable following setting, to also intern field values:
+Additionally, you can enable the following setting, to also intern field values:
 
 ``` xml
 <!-- INTERNING KNOWN FIELD VALUES 
@@ -92,7 +92,7 @@ If you enable it, Sitecore will try to reuse values for fields from the followin
 </fieldIdsToIntern>
 ```
 
-Getting back to my real world example, this how memory consumption chart looked like after I enabled those two settings. As you can see the memory consumption is lower by about 4GB this time.
+Getting back to my real world example, this is how the memory consumption chart looked after I enabled those two settings. As you can see the memory consumption is lower by about 4GB this time.
 
 ![Memory consumption after smart publish with interning enabled](/assets/images/posts/012/memory-consumption-after-smart-publish-with-interning-enabled.jpg)
 
@@ -100,13 +100,13 @@ And this is how it looks in dotMemory. After 150k it has 9M objects stored in me
 
 ![Memory snapshot comparison from dotmemory with intrning enabled](/assets/images/posts/012/memory-snapshot-comparison-from-dot-memory-with-interning-enabled.jpg)
 
-The interning mechanism is very fast so you shouldn't see any performance issues when you enabled it. The price we pay is one `ConcurrentDictionary` lookup per field and it is not even visible during the dotTrace profiling. I also heard that Sitecore considers including interning by default for future versions of product.
+The interning mechanism is very fast so you shouldn't see any performance issues when you enabled it. The price we pay is one `ConcurrentDictionary` lookup per field and it is not even visible during the dotTrace profiling. I also heard that Sitecore considers including interning by default for future versions of the product.
 
 ### #2 Use MemoryHealthMonitor
 
-If you enabled interning mechanism and you still worry about memory consumption you can configure `MemoryHealthMonitor`. In case that your memory consumption exceeds defined Threshold memory monitor can clear your Sitecore cache and then force garbage collection. It is better than application restart, right?
+If you enabled interning mechanism and you still worry about memory consumption you can configure `MemoryHealthMonitor`. In case that your memory consumption exceeds the defined Threshold, memory monitor can clear your Sitecore cache and then force garbage collection. It is better than application restart, right?
 
-This is how your patch can looks like:
+This is how your patch can look like:
 
 ``` xml
 <hook type="Sitecore.Diagnostics.MemoryMonitorHook, Sitecore.Kernel">
@@ -119,6 +119,6 @@ This is how your patch can looks like:
 </hook>
 ```
 
-Remember that `MemoryHealthMonitor` works only if you enable Performance Counters, but you can easly customize this behaviour.
+Remember that `MemoryHealthMonitor` works only if you enable Performance Counters, but you can easily customize this behaviour.
 
 Happy Sitecoring!

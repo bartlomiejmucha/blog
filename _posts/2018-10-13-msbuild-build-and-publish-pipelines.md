@@ -92,9 +92,9 @@ The `CoreBuild` target is defined like this:
 
 As you can see it's a long list of targets. There are some preparation steps first, then the references are resolved, and then the code is compiled and so on.
 
-Describing those targets it's outside the scope of this article. It's just a starter. If you want to extend the Build process, you have to dig through it and understand how it works.
+Describing those targets is outside the scope of this article. It's just a starter. If you want to extend the Build process, you have to dig through it and understand how it works.
 
-Similar for `Rebuild` target:
+Similarly for the `Rebuild` target:
 
 ``` xml
 <PropertyGroup>
@@ -110,7 +110,7 @@ Similar for `Rebuild` target:
 
 The `BeforeRebuild` and `AfterRebuild` are empty, and we can override them.
 
-And again for Clean target:
+And again for the Clean target:
 
 ``` xml
 <PropertyGroup>
@@ -168,7 +168,7 @@ In a web application project, an additional import is added to the project file:
 <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v10.0\WebApplications\Microsoft.WebApplication.targets" Condition="false" />
 ```
 
-The **Microsoft.WebApplication.targets** then will import **Microsoft.Web.Publishing.targets**. And this is where some customisation to default Publish pipeline, that is required for web applications, is defined.
+The **Microsoft.WebApplication.targets** then will import **Microsoft.Web.Publishing.targets**. And this is where some customisation to the default Publish pipeline, that is required for web applications, is defined.
 
 ### I want more
 
