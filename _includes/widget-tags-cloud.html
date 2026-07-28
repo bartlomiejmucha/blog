@@ -2,7 +2,7 @@
 	<h4>Tag Cloud</h4>
 	<div class="tagcloud">
 
-		{% assign sorted_tags = site.tags | sort_natural %}
+		{% assign sorted_tags = site.tags | sort %}
 		{% for tag in sorted_tags %}
 		<a href="{{ '/tags/' | relative_url }}{{ tag[0] | slugify }}/">{{ tag[0] }}</a>
 		{% endfor %}
