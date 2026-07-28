@@ -1,0 +1,25 @@
+---
+layout: page
+---
+<div class="single-post mb-0">
+	<div class="entry clearfix">
+		<div class="entry-title">
+			<h2>Posts tagged &ldquo;{{ page.tag }}&rdquo;</h2>
+		</div>
+		<div class="entry-content mt-0">
+
+			{% assign tagged_posts = site.tags[page.tag] %}
+			<ul class="tagged-posts">
+				{% for post in tagged_posts %}
+				<li>
+					<a href="{{ post.url | relative_url }}">{{ post.title }}</a>
+					<small>&mdash; {{ post.date | date: "%B %-d, %Y" }}</small>
+				</li>
+				{% endfor %}
+			</ul>
+
+			<p class="topmargin-sm"><a href="{{ '/tags/' | relative_url }}">&larr; All tags</a></p>
+
+		</div>
+	</div>
+</div>
