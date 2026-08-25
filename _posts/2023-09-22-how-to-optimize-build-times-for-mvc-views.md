@@ -8,7 +8,7 @@ tags: [Sitecore, MSBuild, MVC]
 image: /assets/images/posts/msbuild-series-small-logo.png
 categories: msbuild
 ---
-### Compile MVC views during build
+## Compile MVC views during build
  
 By default views are compiled at the runtime on the first request. It slows down start up times but also if there is a bug in the view, the error page will be displayed. That is why, it's a good idea to compile mvc views during build to pick up errors as early in the development process as possible.
 
@@ -25,7 +25,7 @@ Enabling MVC compilation during build time can be done by extending msbuild. To 
   <AspNetCompiler VirtualPath="temp" PhysicalPath="$(ProjectDir)" />
 </Target>
 ```
-### Build MVC views incrementally
+## Build MVC views incrementally
 
 The above code works fine, however if you have a huge number of projects (like we normally have in sitecore solutions) and a lot of `*.cshtml` files, the total build time of your solution can hugely increase. The `aspnet_compiler.exe` which is used under the hood is not well optimized. In my current project building mvc views doubles the total build time. It is especially painful for those with slow machines.
 

@@ -36,6 +36,6 @@ This only happens with **packages.config**. If you use `PackagesReferences` it w
 </Target>
 ```
 
-### What next?
+## What next?
 
 In my [next article]({{ site.baseurl }}{% post_url 2023-09-22-how-to-optimize-build-times-for-mvc-views %}) in the **MSBuild** series I demonstrated how to build mvc views incrementally.

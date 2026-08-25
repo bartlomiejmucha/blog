@@ -3,5 +3,5 @@ layout: tag
 tag: "Square"
 title: "Tag: Square"
 description: "Articles tagged Square."
-permalink: /tags/square/
+permalink: /en/blog/tags/square/
 ---

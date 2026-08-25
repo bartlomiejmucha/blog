@@ -3,5 +3,5 @@ layout: tag
 tag: "Configuration Files"
 title: "Tag: Configuration Files"
 description: "Articles tagged Configuration Files."
-permalink: /tags/configuration-files/
+permalink: /en/blog/tags/configuration-files/
 ---

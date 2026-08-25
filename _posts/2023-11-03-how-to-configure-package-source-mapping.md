@@ -5,7 +5,7 @@ description: "In Sitecore projects, we usually have more than one feed source fo
 date: "2023-11-03 +0100"
 tags: [Sitecore, Nuget, DevOps]
 ---
-### Multiple feed sources
+## Multiple feed sources
  
 Most sitecore projects usually have more than one feed source for packages and during restore nuget will do a request to each of them to find a package. That means many unnecessary network requests. 
 
@@ -28,7 +28,7 @@ The `nuget.config` file might look like that:
 With that config, for each package that has to be restored, nuget will do two requests (because we have two sources) to find a package.
 Our example is very simple, but if you have more sources in the config (maybe multiple private ones), the number of unnecessary requests might be huge.
 
-### Adding package source mapping
+## Adding package source mapping
 
 Fortunately nuget allows us to configure [package source mapping](https://learn.microsoft.com/en-us/nuget/consume-packages/package-source-mapping). We can use patterns, here is an example:
 

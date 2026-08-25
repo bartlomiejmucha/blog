@@ -4,6 +4,8 @@ User-agent: *
 Allow: /$
 Allow: /en/blog$
 Allow: /en/blog/
+Allow: /assets/
 Allow: /sitemap.xml
+Allow: /feed.xml
 Disallow: /
 Sitemap: {{ 'sitemap.xml' | absolute_url }}

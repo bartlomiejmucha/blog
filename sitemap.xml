@@ -1,0 +1,31 @@
+---
+layout: null
+sitemap: false
+---
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  {%- for post in site.posts -%}
+  {%- unless post.sitemap == false %}
+  <url>
+    <loc>{{ post.url | absolute_url | xml_escape }}</loc>
+    <lastmod>{{ post.last_modified_at | default: post.date | date_to_xmlschema }}</lastmod>
+  </url>
+  {%- endunless -%}
+  {%- endfor -%}
+
+  {%- for page in site.pages -%}
+  {%- unless page.sitemap == false or page.url contains '404' or page.name == 'robots.txt' or page.output == false %}
+  <url>
+    <loc>{{ page.url | absolute_url | xml_escape }}</loc>
+    {%- if page.layout == 'tag' -%}
+    {%- assign tagged = site.tags[page.tag] -%}
+    {%- if tagged and tagged.size > 0 %}
+    <lastmod>{{ tagged.first.last_modified_at | default: tagged.first.date | date_to_xmlschema }}</lastmod>
+    {%- endif -%}
+    {%- elsif page.last_modified_at %}
+    <lastmod>{{ page.last_modified_at | date_to_xmlschema }}</lastmod>
+    {%- endif %}
+  </url>
+  {%- endunless -%}
+  {%- endfor %}
+</urlset>

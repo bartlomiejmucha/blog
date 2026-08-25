@@ -6,25 +6,25 @@ date: "2017-11-09 +0100"
 tags: [Sitecore, Helix, Habitat, Quantus]
 image:
 ---
-### Why?
+## Why?
 
 It happens very often. There is some static label on a website that displays a number of something like a number of products or number of results. It looks fine until someone finds out that it does not work for some edge case. For example, your label is like this `{0} products` and it works fine for `1.5 products`, `10 products`, `15 products` or even for `101 products`, but for some reason, it does not work for `1 products`.
 
 It's easy to fix for English. One can add another field or dictionary entry `{0} product` and use it only when the number equals `1`. However, for Polish, the rules are more complicated. There are `0 produktów`, `1 produkt`, `1,5 produktu`, `2-4 produkty`, `5-21 produktów`, `22-24 produkty` and so on. Each language has its own rules. There is no native implementation for this in Sitecore, that's why I created the Quantus library.
 
-### How?
+## How?
 
 Fortunately, there is a page where rules for cardinal and ordinal numbering are described for all languages: [Language Plural Rules](https://www.unicode.org/cldr/cldr-aux/charts/25/supplemental/language_plural_rules.html). There are up to six plural categories for each language: `zero`, `one`, `two`, `few`, `many` and `other`. English, for example, uses only two of them: `one` and `other`. Polish uses `one`, `few`, `many` and `other`.
 
 The rules for English cardinal numbering look like this:
 
-![English cardinal rules](/assets/images/posts/009/english-cardinal-rules.png)
+![English cardinal rules](/assets/images/posts/009/english-cardinal-rules.png){: loading="lazy" width="1650" height="461"}
 
 `if number == 1 || number == -1` then use `one` category otherwise use `other` category. For Polish, rules are more complicated:
 
-![Polish cardinal rules](/assets/images/posts/009/polish-cardinal-rules.png)
+![Polish cardinal rules](/assets/images/posts/009/polish-cardinal-rules.png){: loading="lazy" width="1630" height="719"}
 
-### The library
+## The library
 
 The library consists of two assemblies: Quantus and Quantus.Sitecore. The first one contains providers for different languages and the second one provides basic integration of the first one with Sitecore. At the moment the library supports only a few languages, but the aim is to support all of them.
 
@@ -59,13 +59,13 @@ Provider name is a two letter language iso code. Default `fallback` provider is 
 PluralCategory GetPluralCategory(string language, decimal quantity);
 ```
 
-### The Sitecore Dictionary
+## The Sitecore Dictionary
 
 I don't want to force the way one can use that library. That's why helper methods are not included in **Quantus.Sitecore** assembly. I'm going to change that when I or the community figure out the best way to implement it. However, here is an example of how to use it with Sitecore Dictionary.
 
 First create a `Dictionary Folder` (Month) and six `Dictionary Entries` (Month Zero, Month One …) like in the following picture (the item names don't matter):
 
-![Sitecore dictionary example](/assets/images/posts/009/sitecore-dictionary-example.png)
+![Sitecore dictionary example](/assets/images/posts/009/sitecore-dictionary-example.png){: loading="lazy" width="1473" height="750"}
 
 For each dictionary entry set the key to `month + . + {category}` so for Month Zero set it to `month.zero`, for Month One: `month.one` etc. Then you can use the following helper method to render correct translation:
 
@@ -83,11 +83,11 @@ And use it like this:
 PluralText("month", 10);
 ```
 
-### The Habitat Dictionary
+## The Habitat Dictionary
 
 I also created an example integration of Quantus library with custom dictionary implementation in Habitat. I created a pull request for this here: [Pull request to Habitat repository](https://github.com/Sitecore/Habitat/pull/353). I created a new `DictionaryPluralEntry` template with fields like this:
 
-![Habitat dictionary example](/assets/images/posts/009/habitat-dictionary-example.png)
+![Habitat dictionary example](/assets/images/posts/009/habitat-dictionary-example.png){: loading="lazy" width="2020" height="1171"}
 
 I also created helper methods for Habitat dictionary. The example usage is in `SearchResultHeader.cshtml` view file:
 
@@ -95,10 +95,10 @@ I also created helper methods for Habitat dictionary. The example usage is in `S
 @string.Format(Html.Sitecore().DictionaryPlural("/search/header/Title With Results", totalResults, "Your search for '{0}' yielded '{1}' results:"), Model.Context.Query, totalResults)
 ```
 
-### Source code
+## Source code
 
 Source code for both [Quantus](https://github.com/bartlomiejmucha/Quantus) and [Quantus.Sitecore](https://github.com/bartlomiejmucha/Quantus.Sitecore) is available on my [GitHub](https://github.com/bartlomiejmucha).
 
-### What next?
+## What next?
 
 The aim is to implement providers for all languages and add support for ordinal numbering. I would also like to figure out the best way to use that library in Sitecore with the community. And if you wish to contribute, **please do!**

@@ -16,7 +16,7 @@ I also wrote the [Visual Studio plugin](https://marketplace.visualstudio.com/ite
 
 Source code for both: the NuGet package and the VS plugin is on my GitHub repositories: [Unicorn.MSBuild](https://github.com/bartlomiejmucha/Unicorn.MSBuild) and [SyncUnicorn](https://github.com/bartlomiejmucha/SyncUnicorn-for-VisualStudio).
 
-### The implementation
+## The implementation
 
 Let's create a new ClassLibrary project and then create a new `SyncUnicorn` class that inherits from `Task` class (or `ToolTask` class if you prefer, which is more advanced):  
 
@@ -70,7 +70,7 @@ The last thing is the definition of a new target named `SyncUnicorn`. Inside we 
 </Project>
 ```
 
-### How to use it?
+## How to use it?
 
 If you installed the Visual Studio plugin, then just right click on the WebRoot project and click Sync Unicorn. You can also execute it from a command line like this:
 
@@ -78,6 +78,6 @@ If you installed the Visual Studio plugin, then just right click on the WebRoot 
 msbuild WebRoot.csproj /t:SyncUnicorn /p:UnicornControlPanelUrl=https://habitat.sc/unicorn.aspx /p:UnicornSharedSecret=zUcdjtAKn21fEXIqFnrSzUcdjtAKn21fEXIqFnrSzUcdjtAKn21fEXIqFnrS
 ```
 
-### What next?
+## What next?
 
 If you want to see that in action, check out my [next article]({{ site.baseurl }}{% post_url 2018-11-12-video-speed-comparison-of-gulp-vs-msbuild-build-publish %}) in this series.

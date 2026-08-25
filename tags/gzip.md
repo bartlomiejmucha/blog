@@ -3,5 +3,5 @@ layout: tag
 tag: "Gzip"
 title: "Tag: Gzip"
 description: "Articles tagged Gzip."
-permalink: /tags/gzip/
+permalink: /en/blog/tags/gzip/
 ---

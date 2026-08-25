@@ -3,5 +3,5 @@ layout: tag
 tag: "Indexing"
 title: "Tag: Indexing"
 description: "Articles tagged Indexing."
-permalink: /tags/indexing/
+permalink: /en/blog/tags/indexing/
 ---

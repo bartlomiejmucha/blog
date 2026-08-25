@@ -3,7 +3,7 @@ layout: post
 title: "AutoHotkey - brilliant tool that can make your life easier"
 description: "A few weeks ago I decided to install a brilliant tool which is AutoHotkey. Since then I have used it every day. See how it can help you."
 date: "2014-05-17 +0100"
-tags: productivity AutoHotKey
+tags: [Productivity, AutoHotKey]
 image: /assets/images/posts/001/autohotkey-small.png
 ---
 About a year ago after reading a blog post by Maciej Aniserowicz [Nie będziesz brał myszki, wroga swego, nadaremno][devstyle-post] I decided to install and try a variety of tools that he describes there. I was playing with [VistaSwitcher][vista-switcher], [Launchy][launchy] and [AutoHotKey][ahk].
@@ -11,6 +11,8 @@ About a year ago after reading a blog post by Maciej Aniserowicz [Nie będziesz 
 After I installed AHK, I decided to use it for some simple tasks I repeat every day that are easy to script.
 
 I searched a little in the depths of the internet and started to create a new script. I put shortcuts there to most frequently run applications, shortcuts to files that I often edit and commands that I run from time to time in CMD.
+
+## The AutoHotkey script: launch apps, open files, run commands
 
 I created something like this:
 
@@ -46,7 +48,11 @@ else if userKey = rcmd
 return
 ```
 
+## What happens when you press WIN+Z
+
 I push `WIN+Z` and then type `rvs1` and hit `enter` then Visual Studio starts with an open project on which I work for a long time.
+
+## Why the script must run with administrator rights
 
 The cool thing is that I set the script to run with elevated privileges, so all commands in it run with administrator rights. Thanks to this, Visual Studio or hosts.etc file opens correctly.
 

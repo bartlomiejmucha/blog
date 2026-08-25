@@ -20,7 +20,7 @@ using (new EditContext(item))
 
 What do you think will happen?
 
-### Let's dig into the code.
+## Let's dig into the code.
 
 The `SaveItem` method in the `ItemProvider` class looks like this:
 
@@ -68,7 +68,7 @@ The method does nothing when there already is any version or there are no change
 
 So we should be good as we changed only the `SKU` field and it's a shared one?
 
-### NOPE!
+## NOPE!
 
 The `EditContext` has three overloads:
 
@@ -82,7 +82,7 @@ The last one has the possibility to disable update of the statistics, like the u
 
 In our example, we use the first overload. It by default sets `updateStatistics` to `true`. Because of this, the statistics fields are updated and when the `item.GetChanges()` method is called inside the `EnsureVersion`, it returns our shared field and four additional versioned fields. The new item version is created.
 
-### This is not what I expected
+## This is not what I expected
 
 It smells to me a bit because when you edit something you do not expect to add something without warning. I spent a few hours debugging our product importer because of this.
 

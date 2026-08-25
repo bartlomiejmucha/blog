@@ -3,5 +3,5 @@ layout: tag
 tag: "Brotli"
 title: "Tag: Brotli"
 description: "Articles tagged Brotli."
-permalink: /tags/brotli/
+permalink: /en/blog/tags/brotli/
 ---

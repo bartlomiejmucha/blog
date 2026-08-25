@@ -10,7 +10,7 @@ categories: msbuild
 ---
 **MSBuild** can be your friend. At first, it is a difficult friendship though, because it speaks a different language. However, if you talk to it patiently, it can do a lot of useful things for you. For example, it can build your Helix projects in the same way as gulp scripts do, but much, much faster. But this is a story that I will tell you next time. Today let's start with some basics.
 
-### Target
+## Target
 
 Consider the following basic example:
 
@@ -30,7 +30,7 @@ You should see the **MSBuild** says hello! message. The `/t:` parameter is the n
 
 You can think about a `Target` as a method or function. Target is a list of `Tasks` that are executed one by one in order. In the example above we created one target named Hello. It contains one `Task` named `Message`. The `Message` is a predefined task. There are plenty of other predefined tasks that you can use. You can also implement custom tasks using C#.
 
-### Property
+## Property
 
 Think of a `Property` as a string variable. Each property has to be inside `PropertyGroup`. You can have one or more `PropertyGroup` and one or more `Property` inside a single group. The `PropertyGroup` is just a separator. Let's add one to our **Hello.csproj** file:
 
@@ -51,7 +51,7 @@ Now our `Hello` target displays message that is stored in `HelloMessage` propert
 
 The value from command line will be used instead of the one from **Hello.csproj** file.
 
-### Item
+## Item
 
 Think of an `Item` as a list of objects. Each object can have `Metadata` and has to be inside `ItemGroup`. Similarly to `PropertyGroup`, the `ItemGroup` is just a container. Thanks to this, you can have property and item with the same name. Let's update our *Hello.csproj*:
 
@@ -76,7 +76,7 @@ We added `FilesToList` property and we added `FilesToList` item. The name is the
 
 You can find a list of Well-known Item Metadata [here](https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-well-known-item-metadata?view=vs-2022). You can also add your own `Metadata`.
 
-### DependsOnTargets
+## DependsOnTargets
 
 Let's add the second target to our example:
 
@@ -127,7 +127,7 @@ We can depend on more than one target if we want:
 
 To separate list of targets use `;`. 
 
-### BeforeTargets and AfterTargets
+## BeforeTargets and AfterTargets
 
 MSBuild 4.0 introduced two new attributes: `BeforeTargets` and `AfterTargets`. You can use them instead of `DependsOnTargets`:
 
@@ -157,7 +157,7 @@ MSBuild 4.0 introduced two new attributes: `BeforeTargets` and `AfterTargets`. Y
 
 You can read more details about the order in which targets are run [here](https://learn.microsoft.com/en-us/visualstudio/msbuild/target-build-order?view=vs-2022).
 
-### Conditions
+## Conditions
 
 You can use conditions to execute some parts of code only if something is true:
 
@@ -185,7 +185,7 @@ You can use conditions to execute some parts of code only if something is true:
 
 When `HelloMessage` is empty then set it to our initial message. You can use conditions on properties, items and targets (and some others).
 
-### Examine Class Library project
+## Examine Class Library project
 
 Below you can see the content of a new Class Library project that I created in VisualStudio 2017:
 
@@ -256,16 +256,16 @@ Below you can see the content of a new Class Library project that I created in V
 
 We also have two ItemGroup. We could, of course, put everything into a single ItemGroup. It just separates two different lists. The first ItemGroup adds all project references into Reference list. The second one adds all files into Compile list. MSBuild will then use those properties and items to build your project.
 
-### Imports
+## Imports
 
 When you execute `Clean`, `Build` or `Rebuild` from Visual Studio you actually execute targets with the same name that are defined in **Microsoft.Common.targets** file. In the project above, there is `Import` line at the end. It loads **Microsoft.CSharp.targets** file that is located in the path stored in a `MSBuildToolsPath` property. This file contains a bunch of other imports inside and **Microsoft.Common.targets** is between them.
 
 Import is one of a few ways how you can extend MSBuild with your custom code. Read my next article in the series to find out more about this.
 
-### Advanced topics
+## Advanced topics
 
 This article only describes the basics of MSBuild. The best way to learn more is to read [official documentation](https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild?view=vs-2022), read **Microsoft.Common.targets** and other target files and read [this book](http://msbuildbook.com/).
 
-### I want more
+## I want more
 
 To learn more, read my [next article]({{ site.baseurl }}{% post_url 2018-10-12-msbuild-extension-points %}) in the series where I described msbuild extension points.

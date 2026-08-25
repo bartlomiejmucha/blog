@@ -8,7 +8,7 @@ image:
 ---
 If you have ever faced Redis timeouts issue, you probably know that there is no single reason for it. For this, you have to investigate and understand your particular situation. I have seen Redis timeouts in all my projects and every time it was a different cause and a different fix needed. In this article, I provide the most probable causes and solutions. I'm going to update this article if I find something new.
 
-### 1. Burst of traffic
+## 1. Burst of traffic
 
 In my opinion, this one is the most common reason and it's related to the way ThreadPool is implemented in .NET. The ThreadPool provides two types of threads: Worker and IOCP. Each has a defined minimum. By default, the minimum is set to the number of processors on a system. So for example on Azure P2v2 which has two cores, the minimum is set to 2.
 
@@ -24,41 +24,41 @@ The number of busy worker threads is 80 and the minimum is set to 2. So 78 threa
 
 For all these reasons, when the application gets a burst of traffic that needs more threads than the minimum, Redis can hit timeouts.
 
-#### Solution
+### Solution
 
 We can change the minimum Worker and IOCP threads for the system. We can do that in Web.config under `<processModel>` according to [this page](https://docs.microsoft.com/en-us/previous-versions/dotnet/netframework-4.0/7w2sway1(v=vs.100)) but on Azure, we need to call `ThreadPool.SetMinThreads` API during application startup. In Sitecore, the best place is to put a processor to the `<initialization>` pipeline.
 
 Fortunately, Sitecore provided a [patch](https://kb.sitecore.net/articles/464570) with a processor that allows configuring these values. It also reduces the max size of ThreadPool to prevent CPU over-usage and it limits the max concurrent requests at one time, to prevent ThreadPool clogging.
 
-#### What values are correct?
+### What values are correct?
 
 The Microsoft documentation recommends setting a minimum to 200 or 300 threads and then test and tweak as needed. These values are split across all cores. On the other hand, Sitecore's patch sets the minimum to 15 Worker threads per core and 10 IOCP threads per core. My preference is to use Sitecore's default and then tweak as needed.
 
-### 2. High CPU
+## 2. High CPU
 
 If your CD server has periods of time with CPU around 100% utilization, then there could be not enough CPU power to process Redis threads in those periods of time. In one of my projects where we use Dianoga with jpegoptim processor, and at that time we were at S2 plan, the CPU during image optimization with jpegoptim went to 100% for even 60s for some very large, high-quality images. After looking at logs and reading metrics, we have found a correlation between high CPU, image optimization and Redis timeouts.
 
-#### Solution
+### Solution
 
 In our case, we scaled up the plan from S2 to P1V2 (which costs the same amount of money) and our problems disappeared. The P1V2 has only one core, but the CPU is much better, so it handles image optimization much more quickly.
 
-### 3. Bandwidth limit on Redis
+## 3. Bandwidth limit on Redis
 
 If you transfer a large amount of data to and from Redis you can hit a bandwidth limit. Microsoft provides a [nice table](https://docs.microsoft.com/en-us/azure/azure-cache-for-redis/cache-faq#cache-performance) with observed bandwidth limit on various pricing tiers. To see how much data is transferred to and from Redis, browse to your cache instance in the Azure portal, go to the Metrics blade and add two metrics: Cache Read and Cache Write with Sum aggregation.
 
-![Redis cache read and write](/assets/images/posts/027/redis_cache_read_and_write.jpg)
+![Redis cache read and write](/assets/images/posts/027/redis_cache_read_and_write.jpg){: loading="lazy" width="2416" height="1661"}
 
-#### Solution
+### Solution
 
 The obvious solution is to scale your Redis up to have more bandwidth. Another solution is to review your application and check if you can store less data in Redis.
 
-#### Links
+### Links
 
 - [https://kb.sitecore.net/articles/464570](https://kb.sitecore.net/articles/464570)
 - [https://docs.microsoft.com/en-us/azure/azure-cache-for-redis/cache-faq#recommendation](https://docs.microsoft.com/en-us/azure/azure-cache-for-redis/cache-faq#recommendation)
 - [https://github.com/StackExchange/StackExchange.Redis/blob/master/docs/Timeouts.md](https://github.com/StackExchange/StackExchange.Redis/blob/master/docs/Timeouts.md)
 - [https://docs.microsoft.com/en-us/azure/azure-cache-for-redis/cache-faq#cache-performance](https://docs.microsoft.com/en-us/azure/azure-cache-for-redis/cache-faq#cache-performance)
 
-### 4. RPS limit on Redis
+## 4. RPS limit on Redis
 
 I described it in [another article]({{ site.baseurl }}{% post_url 2020-02-17-are-you-hitting-redis-requests-per-second-rps-limit %}).

@@ -8,9 +8,13 @@ image:
 ---
 **!!! Here is the link to the original article: [link]({{ site.baseurl }}{% post_url 2019-01-23-how-to-copy-mediacache-from-prod-to-stage-slot-during-deployment-with-azure-devops %}) !!!.**
 
+## Why the original script started timing out
+
 The original script works fine, however, when the MediaCache folder grows, it takes longer and longer to execute and at some point it starts throwing timeouts every time. To me, it was weird because downloading MediaCache locally worked very fast every time (it was 30 minutes vs 1 minute locally). 
 
 My colleague wrote an article [How to expand archive with powershell](https://blog.senktas.net/2019/07/12/how-to-expand-archive-with-powershell/) where he compared performance between `[io.compression.zipfile]::ExtractToDirectory` and Powershell's `Expand-Archive` command. The conclusion was that `[io.compression.zipfile]::ExtractToDirectory` is much faster than the *Powershell* command.
+
+## Replacing Invoke-RestMethod with WebClient
 
 I thought that maybe there is a similar situation with my script and it turned out that it is. Instead of using `Invoke-RestMethod` I decided to use `WebClient` and the results are amazing. The script finally works fast. 
 
@@ -34,6 +38,8 @@ $webClient.Headers.Add("Content-Type","multipart/form-data");
 
 $webClient.DownloadFile($kuduApiUrl, $localPath)
 ```
+
+## The full updated script
 
 And here is the full script:
 

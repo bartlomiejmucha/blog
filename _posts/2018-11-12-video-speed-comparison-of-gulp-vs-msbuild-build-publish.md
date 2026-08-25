@@ -14,6 +14,6 @@ If you like the video and want more, please let me know in comments and subscrib
 
 {% include youtube-embed.html url="https://www.youtube-nocookie.com/embed/RaFwk5kp_vU" %}
 
-### Want more?
+## Want more?
 
 If you like to know how to extend msbuild to include indirect references, check out my [next article]({{ site.baseurl }}{% post_url 2018-12-14-how-to-extend-msbuild-to-copy-indirect-references %}) in this series.

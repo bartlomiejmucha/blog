@@ -30,7 +30,7 @@ $stopwatch.Stop()
 write-host $stopwatch.Elapsed
 ```
 
-### Performance
+## Performance
 
 On my test virtual machine, for 10,000 items, the script executes from about an hour to one and a half hours. It is quite a lot of time if you want to insert a million products. That is why I introduced two optimisations. Here they are:
 

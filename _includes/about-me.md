@@ -4,4 +4,4 @@ I started programming on my first computer, the Commodore 64, in 2000, and I hav
 
 I like listening to audiobooks while taking a walk. I'm interested in biology, especially the human genome, where I see parallels between the genetic code and programming languages. Additionally, I enjoy sci-fi and fantasy movies, as well as riding a bike.
 
-![Sitecore MVP Technology 2019 logo](/assets/images/Sitecore_MVP_Technology_2019.jpg)
+![Sitecore MVP Technology 2019 logo](/assets/images/Sitecore_MVP_Technology_2019.jpg){: loading="lazy" width="343" height="335"}

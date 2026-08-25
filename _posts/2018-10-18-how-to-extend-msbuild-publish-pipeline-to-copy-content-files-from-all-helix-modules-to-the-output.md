@@ -12,7 +12,7 @@ In Habitat's gulp script, all projects are published one by one independently. F
 
 It's possible to drastically speed up this process by extending MSBuild to publish all projects in a single pass.
 
-### WebRoot project
+## WebRoot project
 
 We need to pick one project that we want to extend with our MSBuild customisations. This can be a project from your Project layer. However, I think that the best option is to create a new project outside of your layer folders and name it **WebRoot**. Its only responsibility is to build and publish the solution.
 
@@ -31,7 +31,7 @@ So, let's create a new Web Application project under src folder. By doing this y
 
 **Helix.targets** is the file where we are going to add our customisations.
 
-### Collect modules to publish
+## Collect modules to publish
 
 First, we need to collect a list of modules that we want to publish. We need paths to .csproj files. Gulp script searches for .csproj in solution directory using a query like this: "/**/code/*.csproj". We can use a similar technique to get that list:
 
@@ -65,7 +65,7 @@ We can then use `ProjectReference` item directly or populate `HelixProjectPaths`
 
 The advantage of this approach is that we can easily include or exclude projects and publish only the modules we want and also that MSBuild will build referenced projects if necessary and publish compiled DLLs.
 
-### Publish content files from modules
+## Publish content files from modules
 
 In **Microsoft.Web.Publishing.targets** there is a target named `PipelineCollectFilesPhase`. It collects files to publish. Its declaration looks like this:
 
@@ -135,7 +135,7 @@ This is how the Helix.targets file can look at the end:
 </Project>
 ```
 
-### How to test it?
+## How to test it?
 
 Create a **WebRoot** project and **Helix.targets** file, import Helix.targets inside WebRoot.csproj. Don't forget to add modules as project references in WebRoot project, set Build Action for Web.config to None, create (or copy) publishing profile and try to do a publish to a new location on your disk. You should see all content files from your all referenced modules as well as all required dlls in the bin folder.
 
@@ -143,6 +143,6 @@ There is one more thing. Convert your WebRoot project to use PackageReference in
 
 I committed all above changes into [this commit](https://github.com/bartlomiejmucha/Habitat/commit/9f26f20f17fd2074ce0e76a5a73a8c5c8a2f1325) in my Habitat fork.
 
-### I want more
+## I want more
 
 If you like to know how to extend MSBuild to apply transform files, check out my [next article]({{ site.baseurl }}{% post_url 2018-10-24-how-to-extend-msbuild-publish-pipeline-to-apply-transform-files %}) in this series.

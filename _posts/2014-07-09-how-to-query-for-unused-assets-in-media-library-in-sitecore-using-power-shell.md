@@ -8,6 +8,8 @@ image: /assets/images/posts/002.003/sitecore-powershell-console-small.png
 ---
 A too big database generates a lot of problems. It is increasingly difficult to backup the database because the backup process, compression and upload to - for example - FTP may take several hours. If you have additional specific requirements like to store backups from the last 7 days, last 6 Fridays, 4 last first Fridays of the month, then you need a lot of storage space.
 
+## The PowerShell script to find unused media items over 1MB
+
 Below is a PowerShell script that you can use to search media library for unused items larger than 1MB. You can then ask the client to delete them.
 
 ``` powershell
@@ -18,5 +20,7 @@ get-childitem -recurse
     | sort-object { [System.Int32]::Parse($_.Size) } 
     | format-table {$_.Paths.Path, $_.Size, [Sitecore.Globals]::LinkDatabase.GetReferers($_).Length}
 ```
+
+## Running it from PowerShell Extensions or Sitecore Rocks
 
 This script will only work if you are using PowerShell Extensions (inside Sitecore desktop). If you are using PowerShell from inside Sitecore Rocks, you need to use cmdlets. As far as I know, cmdlet for getting related items will be available in version 2.7.

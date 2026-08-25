@@ -10,7 +10,7 @@ Recently I thought a lot about the reasons to create a custom index instead of u
 
 In my current project, there are around 50k product items in the web database. Each product can have language versions so after rebuild we get around 150k documents in Solr. So I decided to create the smallest possible index that will rebuild our products, and compare rebuild times with our current custom index.
 
-### The Thin Index Configuration
+## The Thin Index Configuration
 
 First I created a new index configuration. I called it `thinSolrIndexConfiguration`. It references `defaultSolrIndexConfiguration` but clears `documentOptions` and `virtualFields` and sets `indexAllFields` to `false`. It looks like this:
 
@@ -120,7 +120,7 @@ The `_version_` field is added by Solr and `_uniqueid` field is set to required 
   ...
   ```
 
-### The Original Index Configuration
+## The Original Index Configuration
 
 The original index configuration which inherits from the `defaultSolrIndexConfiguration` looks like this:
 
@@ -142,6 +142,6 @@ The original index configuration which inherits from the `defaultSolrIndexConfig
 </index>
 ```
 
-### The Results
+## The Results
 
 I rebuilt thin and original index three times on my local PC and on average it took **59 seconds** to rebuild the thin one and **228 seconds** to rebuild the original one, so it's almost 4 times faster. It proves that you should put only the fields you really need into an index. The smaller index also eats less disk space, and it's easier to maintain.

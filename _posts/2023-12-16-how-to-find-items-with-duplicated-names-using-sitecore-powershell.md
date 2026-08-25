@@ -5,7 +5,7 @@ description: "Sitecore 10 by default does not allow having two items with the sa
 date: "2023-12-16 +0100"
 tags: [Sitecore, Sitecore PowerShell]
 ---
-### Sitecore 10
+## Sitecore 10
 Sitecore 10 introduced a new setting, that is set to `false` by default:
 ``` xml
 <!--

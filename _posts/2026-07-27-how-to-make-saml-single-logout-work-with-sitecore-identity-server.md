@@ -5,7 +5,7 @@ description: "Adding a custom SAML identity provider to Sitecore Identity Server
 date: "2026-07-27 +0100"
 tags: [Sitecore, Sitecore 10.4.1, Sitecore Identity, SAML, Sustainsys.Saml2]
 ---
-### Login is the easy part
+## Login is the easy part
 
 Some time ago I had to plug a custom SAML identity provider into Sitecore Identity Server. There are a few good posts out there that walk you through the login side of it, and these are the ones I used when I implemented it:
 
@@ -17,13 +17,13 @@ The approach they describe uses the [Sustainsys.Saml2](https://github.com/Sustai
 
 And then you click logout, after a few redirects you get back to sitecore authenticated again.
 
-### The problem
+## The problem
 
 When you log out of Sitecore, you also want to log out of the identity provider, so the next time you hit the login button you are actually asked to authenticate again instead of being silently signed straight back in from an existing IdP session.
 
 To do that, Sustainsys.Saml2 has to generate a SAML `LogoutRequest` and send it to the IdP. But in my case that request was never produced - so the IdP session was never terminated, and the logout round-trip just bounced me back into Sitecore, still authenticated.
 
-### Why it happens
+## Why it happens
 
 To build a valid `LogoutRequest`, Sustainsys.Saml2 needs two pieces of information from the original login:
 
@@ -36,7 +36,7 @@ The catch is *where* those claims live. During login they are attached to the **
 
 The two Sustainsys logout claims are **not** on that copy-over list. So by the time you actually click logout, they are long gone, Sustainsys can't find the `NameID` and `SessionIndex`, and it can't build the `LogoutRequest`.
 
-### The fix
+## The fix
 
 
 
@@ -76,7 +76,7 @@ if (sessionIndexClaim != null)
 
 With those two claims now living in the Identity Server session, the logout flow has everything it needs. When you hit logout, Sitecore triggers the external sign-out, Sustainsys.Saml2 finds the `LogoutNameIdentifier` and `SessionIndex` claims, generates a proper SAML `LogoutRequest`, and the IdP session finally gets terminated together with the Sitecore one.
 
-### Replacing the AccountController
+## Replacing the AccountController
 
 `ExternalLoginCallback` is part of Sitecore's own `AccountController`, which lives in the `Sitecore.Plugin.IdentityServer` assembly. I can't just drop in another controller with the same name - MVC would discover both and fail with an ambiguous match. So my `AccountController` is a copy of Sitecore's with only the change above, and I have to make MVC use mine instead of Sitecore's.
 
@@ -121,7 +121,7 @@ services
 
 With Sitecore's `AccountController` hidden and mine registered under the same `Account` routes, my `ExternalLoginCallback` - and the two extra claims - now run in its place.
 
-### One assumption
+## One assumption
 
 This fix is only about the claims, and it assumes the rest of your Single Logout setup is already in place. In particular, the IdP metadata has to advertise a Single Logout endpoint, and on the Sustainsys side you need a service certificate with a private key so it can sign the `LogoutRequest` - most IdPs will reject an unsigned one. If either of those is missing, carrying the claims across won't be enough on its own.
 

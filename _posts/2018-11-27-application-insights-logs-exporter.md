@@ -16,14 +16,14 @@ I wrote a tool that just does that. It has three versions:
 - Windows PowerShell script,
 - Script for Sitecore PowerShell Extension.
 
-### The Tool
+## The Tool
 
 To use the tool you have to generate a REST API Key. Here is a [link to documentation](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/api/overview) where you can read how to do it. To see the source code and installation instructions go to my [GitHub repository](https://github.com/bartlomiejmucha/Application-Insights-Logs-Exporter).
 
 The standalone version of the tool:
 
-![Standalone version of the tool](/assets/images/posts/024/standalone.jpg)
+![Standalone version of the tool](/assets/images/posts/024/standalone.jpg){: loading="lazy" width="1106" height="927"}
 
 The SPE version of the tool:
 
-![SPE version of the tool](/assets/images/posts/024/spe.jpg)
+![SPE version of the tool](/assets/images/posts/024/spe.jpg){: loading="lazy" width="1050" height="1077"}

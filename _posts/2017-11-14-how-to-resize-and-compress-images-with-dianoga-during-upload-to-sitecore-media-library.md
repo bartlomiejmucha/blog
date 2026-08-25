@@ -6,7 +6,7 @@ date: "2017-11-14 +0100"
 tags: [Sitecore, Sitecore 8.2 Update-3, Dianoga, Media Library, Compression, resize]
 image:
 ---
-### A bit of theory, TL;DR;
+## A bit of theory, TL;DR;
 
 Image optimisation is a hot topic for me recently. Last week I debugged one issue related to media cache: for a URL without a `?mw` parameter, an image was always served from a database even if a cache file existed inside the `MediaCache` folder. Obviously this, with Dianoga module (where image optimisation for some large images can take a few seconds) and a large number of visitors, can lead to performance problems.
 
@@ -91,7 +91,7 @@ protected virtual void UpdateImageMetaData(MediaStream mediaStream)
 
 As you can see the `UpdateImageMetaData` sets Width and Height of the image, but it does not use originally uploaded stream. Instead, it calls `GetImage` method which in the end tries to get an image from `MediaCache` folder or directly from Sitecore by calling the `getMediaStream` pipeline. That pipeline returned an image transformed by the MaxWidth parameter added by our custom processor I mentioned at the beginning. Width and Height fields were set from the size of the transformed image, not the original one. It looked correct during upload and when you requested the image in the browser, but in the database, the stream with original size has been uploaded.
 
-### A Solution
+## A Solution
 
 After a lot of digging into Sitecore assemblies with DotPeek, I decided to put my code into `MediaCreator.AttachStreamToMediaItem` method. `MediaCreator.CreateFromStream` would be better (because of the name and not only), but Dianoga processors use `MediaStream` and `MediaItem` objects, so we need `MediaItem` to be created first. So I created `CustomMediaCreator` class and put my code after `MediaItem` creation and before the stream is set onto the item:
 

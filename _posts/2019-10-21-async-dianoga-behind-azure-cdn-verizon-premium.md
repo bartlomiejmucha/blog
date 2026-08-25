@@ -22,7 +22,7 @@ It is very important to override max-age for the image on the CDN level to alway
 
 After 2 minutes, when a new request for the image comes, the CDN will revalidate its internal cache. It will do a request to the origin server again. If optimization is completed on the origin server, this time max-age should be set to a higher value (in my case it was 30 days).
 
-### How to do it?
+## How to do it?
 
 To achieve this result, you need to do two things. First, you have to override the `DoProcessRequest` method of `MediaRequstHandler` like this:
 
@@ -121,10 +121,10 @@ Customization is bolded. The only change in the `DoProcessRequest` method is the
 
 Verizon CDN should work quite fine out of the box. I decided to use ADN so I had to add two rules in Rules Engine. The first rule enables caching for `/-/media/*` urls because by default cache is disabled for ADN:
 
-![Rule 1](/assets/images/posts/033/rule-1.jpg)
+![Rule 1](/assets/images/posts/033/rule-1.jpg){: loading="lazy" width="2725" height="466"}
 
  And the second rule sets Max-Age to 30 days on edge servers, so users will always get the correct Max-Age:
 
- ![Rule 2](/assets/images/posts/033/rule-2.jpg)
+ ![Rule 2](/assets/images/posts/033/rule-2.jpg){: loading="lazy" width="2958" height="575"}
 
  That's all folks. If you have any questions find me on Twitter. Cheers

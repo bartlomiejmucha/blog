@@ -8,6 +8,8 @@ image:
 ---
 Recently I have been helping with the migration of one project to Azure. At the same time, the project has been upgraded to Sitecore 8.2 Update-1 and then again 8.2 Update-7. Before we deployed our site to Azure, the clean version of Sitecore 8.2 Update-1 was installed there.
 
+## The exception: SerializationException on ProcessExpiredItems
+
 After deployment to staging and production, we noticed the huge number of exceptions like this:
 
 ``` cs
@@ -23,11 +25,17 @@ ERROR ProcessExpiredItems => System.Runtime.Serialization.SerializationException
    at Sitecore.SessionProvider.Redis.RedisSessionStateProvider.OnProcessExpiredItems(DateTime signalTime)
 ```
 
+## Tracking down which type failed to deserialize
+
 It took me a full day of work to figure out what class exactly is to be deserialized. I had to implement a custom Redis provider and a lot of C# Reflection, but at the end of the day I saw this:
 
-![Reflected type](/assets/images/posts/028/reflected-type.jpg)
+![Reflected type](/assets/images/posts/028/reflected-type.jpg){: loading="lazy" width="1279" height="203"}
+
+## The cause: sessions written by the older Sitecore version
 
 I reached out to Sitecore support and they quickly provided me a solution. The reason for the exceptions was 'old' sessions created by the earlier version of Sitecore (8.2 u1) that cannot be processed by the new version (8.2 u7). The solution for this is to just clear the session storage. It is mentioned in the [Sitecore upgrade guide](https://dev.sitecore.net/~/media/B50CA65AA6844B4B81BF36A01E9DD269.ashx) in the topic '1.4.7 Upgrade the Session Database'.
+
+## How to clear Redis session storage on Azure
 
 Alex from Sitecore support gave me the following steps to clear Redis session storage on Azure:
 

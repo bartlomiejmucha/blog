@@ -3,5 +3,5 @@ layout: tag
 tag: "Solr"
 title: "Tag: Solr"
 description: "Articles tagged Solr."
-permalink: /tags/solr/
+permalink: /en/blog/tags/solr/
 ---

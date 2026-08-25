@@ -10,7 +10,7 @@ image: /assets/images/posts/024/sitecore-power-shell-small.png
 
 When you do a clean deployment to a stage slot on AppService, the MediaCache folder is empty and it will be regenerated. It can lead to poor performance and worse user experience after deployment because every image has to be downloaded from the database, scaled to the requested size and then stored in the MediaCache folder. If you additionally do the image compression with Dianoga, and your AppService plan is rather slow (like S2), compression (especially the lossy one like jpegoptim) can use 100% of your CPU for a long time (like minutes), it can lead to Redis timeouts and even AppService restart (by auto heal). In short words, generating media cache every time you do deployment is just a waste of CPU.
 
-### What if we could download the MediaCache folder from prod slot and upload it to the staging slot during deployment?
+## What if we could download the MediaCache folder from prod slot and upload it to the staging slot during deployment?
 
 It's quite easy. We can use Kudu API for this. On [this blog](https://blog.kloud.com.au/2016/08/30/interacting-with-azure-web-apps-virtual-file-system-using-powershell-and-the-kudu-api/) the author shared PowerShell scripts that we can use to authenticate and work with Kudu. Read it first. I copied the required code from that blog and created the script below:
 

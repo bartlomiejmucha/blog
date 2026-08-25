@@ -5,7 +5,7 @@ description: "Out of curiosity I tried to install Sitecore 10.5 on a Windows 11 
 date: "2026-08-11 +0100"
 tags: [Sitecore, Sitecore 10.5, Installation, ARM64, Windows 11, Mac, URL Rewrite]
 ---
-### Sitecore on a Mac?
+## Sitecore on a Mac?
 
 This one was an experiment. I was curious whether I could run Sitecore 10.5 on a Windows 11 ARM virtual machine on my Mac. If it worked, I could have just one machine for everything I need.
 
@@ -13,15 +13,15 @@ I was expecting problems, but in the end it went quite well. It installed and it
 
 Below are the setup steps, in order.
 
-### 0. The virtual machine
+## 0. The virtual machine
 
 I ran this on **Parallels Desktop 26** on a MacBook Pro 14 inch M5 Max, with a Windows 11 ARM guest downloaded and installed by Parallels. The VM got **4 CPU cores** and **16 GB of RAM**, and at that size it was comfortable to work with.
 
-### 1. A fresh Windows 11, in English
+## 1. A fresh Windows 11, in English
 
 I started from a clean Windows 11 ARM installation and **set the display language to English**. When it was in Polish, installing SQL Server through `winget` failed for me.
 
-### 2. Install IIS
+## 2. Install IIS
 
 Two `dism` commands, from an elevated prompt:
 
@@ -32,7 +32,7 @@ dism /online /enable-feature /featurename:IIS-WebServer /all
 
 The first one enables the web server role and its dependencies, the second one enables the web server itself. `/all` pulls in the parent features, so you don't have to enable them one by one.
 
-### 3. Install SQL Server 2025 and Management Studio
+## 3. Install SQL Server 2025 and Management Studio
 
 Both are available through `winget`, which saves you a trip to the download pages:
 
@@ -41,7 +41,7 @@ winget install Microsoft.SQLServer.2025.Developer
 winget install Microsoft.SQLServerManagementStudio.22
 ```
 
-### 4. Enable SQL authentication and unlock the `sa` user
+## 4. Enable SQL authentication and unlock the `sa` user
 
 The `winget` installation only enables Windows authentication, but the Sitecore Installation Assistant asks for a SQL login. So it has to be configured afterwards, with the following commands.
 
@@ -65,7 +65,7 @@ The `LoginMode` value is only read at startup, so restart the service:
 Restart-Service MSSQLSERVER
 ```
 
-### 5. Install Visual Studio
+## 5. Install Visual Studio
 
 ``` powershell
 winget install --id Microsoft.VisualStudio.Community -e --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.NetWeb --includeRecommended"
@@ -75,7 +75,7 @@ Everything after `--override` is passed straight to the Visual Studio installer:
 
 Do not skip this step even if you were not planning to write code on this machine. On ARM64 Windows this gives you the ARM64 build of Visual Studio, and with it **IIS Express** - which is where the missing piece of the next step comes from.
 
-### 6. Install URL Rewrite
+## 6. Install URL Rewrite
 
 Sitecore needs the URL Rewrite module, also available through `winget`:
 
@@ -85,7 +85,7 @@ winget install --id Microsoft.IIS.URLRewrite -e --accept-package-agreements --ac
 
 This installs fine. On ARM64 it is not enough on its own, which brings us to the one broken piece.
 
-### 7. Fix `rewrite.dll` for ARM64
+## 7. Fix `rewrite.dll` for ARM64
 
 Here is the one thing I mentioned at the top.
 
@@ -101,13 +101,13 @@ That is exactly what [lextm/rewrite-arm64](https://github.com/lextm/rewrite-arm6
 
 It is worth knowing that it pulls components out of IIS Express, which Microsoft licenses **for development and testing only**.
 
-### 8. Install Sitecore 10.5
+## 8. Install Sitecore 10.5
 
 With all of the above in place, the ARM-specific work is done. Download the Sitecore 10.5 Installation Assistant and run it as you would on any other machine - it found IIS, found SQL Server, and installed the remaining prerequisites, Solr included, without needing anything else from me.
 
 If you want a single standalone instance instead of the CM/CD split the Installation Assistant gives you, I described the changes for that in [How to install XM0 with Installation Assistant]({{ site.baseurl }}{% post_url 2026-03-13-how-to-install-xm0-with-installation-assistant %}).
 
-### So does it work?
+## So does it work?
 
 It does. I rebuilt the link databases, populated the Solr indexes and rebuilt them, and clicked around the Content Editor and the Experience Editor. Search works. Nothing along the way complained about the architecture.
 

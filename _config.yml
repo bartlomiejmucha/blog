@@ -2,16 +2,17 @@ title: "Hello Programming World"
 description: "Blog about programming, sitecore and everything else."
 author: "Bartłomiej Mucha"
 url: https://www.bartlomiejmucha.com
+og_image: /assets/images/og-default.png
 
-google_analytics_id: UA-51153105-1
+google_analytics_id: G-S2470CXBB6
 
 permalink: "/en/blog/:categories/:title"
+tags_url: "/en/blog/tags/"
 remote_theme: bartlomiejmucha/blog@theme
 
 plugins:
   - jekyll-remote-theme
   - jekyll-feed
-  - jekyll-sitemap
 
 sass:
   style: compressed

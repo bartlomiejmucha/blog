@@ -18,25 +18,25 @@ MSBuild can apply our transform files. It actually does this for Web.config out 
 
 By File.config I mean any XML or JSON file that we want to transform.
 
-### Scenario #1
+## Scenario #1
 
 This works out of the box for Web.config. MSBuild automatically applies Web.Debug.config or Web.Release.config. For other files, we can use [SlowCheetah](https://github.com/Microsoft/slow-cheetah).
 
 SlowCheetah is an MSBuild extension. It is a bit similar to the extension described in this article. It also includes Visual Studio plugin for previewing transform files.
 
-### Scenario #2 and Scenario #3A
+## Scenario #2 and Scenario #3A
 
 Scenario #2 and #3A are similar. We have File.config that we want to transform. The only difference is the location of the file. It's either located in our solution or in the publish directory. This, unfortunately, does not work out of the box and we need to write an extension for MSBuild to support it.
 
 I decided that the best option is to extend [SlowCheetah](https://github.com/Microsoft/slow-cheetah) to support this scenario. The advantage of the SlowCheetah is that it's maintained by Microsoft, it supports different versions of Visual Studio and MSBuild and it supports transformations of XML and JSON. Additionally, it's easier to extend SlowCheetah than write all from the scratch.
 
-### Scenario #3B
+## Scenario #3B
 
 This scenario is useful when you want to build a deployment package and then use that package to deploy your application on all your environments. It's usually done in an automated way in some CI\CD system like VSTS. I will get back to this scenario in the follow-up article about VSTS.
 
 For now, let's focus on scenario #2 and #3A. This is what we need for local development.
 
-### Implementation of #2 and #3A
+## Implementation of #2 and #3A
 
 First, we have to collect all transform files from helix modules. We can search for all files with **.xdt** or **.jdt** extension, however, I think the better idea, is to mark transform files with our custom metadata inside ***.csproj**. Let's name our custom metadata as `ApplyTransformOnPublish` and set it to true like this:
 
@@ -149,12 +149,12 @@ Now, we have a list of transform files and all files we want to transform are co
 
 As you can see, the target is set to run after `ScApplyWebTransforms` target. So we are actually extending SlowCheetah here. Our target also depends on `CollectTransformFilesToApplyOnPublish` because we need a list of transform files first. Inside target, we execute only one task: `SlowCheetah.TransformTask`. The task is defined in SlowCheetah nuget package, so you have to install it into the WebRoot project. The `SlowCheetah.TransformTask` as a source and destination gets paths to the files that are in package temp directory. After that, the package is published to the publish directory.
 
-### How to test it?
+## How to test it?
 
 In your own copy of Habitat, set `ApplyTransformOnPublish` metadata, install SlowCheetah in your WebRoot project, create Helix.Module.targets file and update Helix.targets and then do the publish.
 
 I committed all above changes into [this commit](https://github.com/bartlomiejmucha/Habitat/commit/a07d022937de29b15fcfe74f7d08ca4e393ce629) in my Habitat fork.
 
-### I want more
+## I want more
 
 If you like to know how to extend msbuild to execute unicorn sync action, check out my [next article]({{ site.baseurl }}{% post_url 2018-10-25-how-to-extend-msbuild-to-execute-unicorn-sync-action %}) in this series.

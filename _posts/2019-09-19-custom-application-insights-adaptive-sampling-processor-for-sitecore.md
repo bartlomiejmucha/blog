@@ -14,7 +14,11 @@ On Azure we have three [types of sampling](https://learn.microsoft.com/en-us/azu
 
 In my opinion, Adaptive sampling is the best. The volume of telemetry sent from a website to the Application Insights is automatically adjusted to keep within a specified maximum rate of traffic and it is controlled via the `MaxTelemetryItemsPerSecond` setting.
 
+## Why adaptive sampling drops your AUDIT logs
+
 To achieve the target volume, some of the generated telemetry is discarded. And this can be a problem if we don't want to reduce some type of logs like **AUDIT** logs.
+
+## A custom telemetry processor that keeps every AUDIT log
 
 Fortunately, it's easy enough to write a custom telemetry processor for adaptive sampling that will store all AUDIT log lines. Here is the source code of the processor:
 
@@ -53,6 +57,8 @@ It inherits from the original `AdaptiveSamplingTelemetryProcessor`. You also nee
 
 The `Process` method first checks if the telemetry item is of `TraceTelemetry` type, then if it contains **AUDIT** in the message. If yes it goes to the next processor in the pipeline. If no, it executes the original adaptive sampling code.
 
+## Wiring the processor into ApplicationInsights.config
+
 The last thing we need to do is to remove original `AdaptiveSamplingTelemetryProcessor` from *ApplicationInsights.config* file and insert our own. We can do that using transform file:
 
 ``` xml
@@ -65,6 +71,8 @@ The last thing we need to do is to remove original `AdaptiveSamplingTelemetryPro
   </TelemetryProcessors>
 </ApplicationInsights>
 ```
+
+## How to verify AUDIT logs are no longer sampled
 
 To make sure it works correctly, you can execute this query in the Application Insights Analytics:
 

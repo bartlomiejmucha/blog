@@ -8,7 +8,7 @@ tags: [Sitecore, Helix, MSBuild]
 image: /assets/images/posts/msbuild-series-small-logo.png
 categories: msbuild
 ---
-### The Build pipeline
+## The Build pipeline
 
 The newly created .csproj file contains the following import near the end of the file:
 
@@ -128,7 +128,7 @@ And again for the Clean target:
 
 The `BeforeClean` and `AfterClean` are empty, and we can override them.
 
-### The Publish pipeline
+## The Publish pipeline
 
 The **Microsoft.Common.CurrentVersion.targets** also contains `Publish` and `PublishOnly` (used by OneClick toolbar) targets. Here are the definitions:
 
@@ -170,6 +170,6 @@ In a web application project, an additional import is added to the project file:
 
 The **Microsoft.WebApplication.targets** then will import **Microsoft.Web.Publishing.targets**. And this is where some customisation to the default Publish pipeline, that is required for web applications, is defined.
 
-### I want more
+## I want more
 
 To learn more, read my [next article]({{ site.baseurl }}{% post_url 2018-10-18-how-to-extend-msbuild-publish-pipeline-to-copy-content-files-from-all-helix-modules-to-the-output %}) in the series, where I describe a real example of extending Publish pipeline.

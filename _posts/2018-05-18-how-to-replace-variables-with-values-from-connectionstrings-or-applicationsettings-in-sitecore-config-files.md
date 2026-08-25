@@ -20,7 +20,7 @@ protected internal virtual XmlDocument DoGetConfiguration()
 
 Global variables are replaced first and environment variables next.
 
-### Global variables
+## Global variables
 
 To define a global variable you create `<sc.variable name="variable_name" value="variable_value" />` element in config file. Take a look at the example of `dataFolder` variable from inside `Sitecore.config` file:
 
@@ -42,11 +42,11 @@ To define a global variable you create `<sc.variable name="variable_name" value=
 
 The `dataFolder` variable is defined and then it is used to define path for `CleanupAgent`. It is defined at the top; however, you can put variables anywhere inside `<sitecore>` node.
 
-### Environment variables
+## Environment variables
 
 Sitecore can also replace variables with values returned by `System.Environment.GetEnvironmentVariable` method. To use this kind of variable you have to prefix the variable name with `env` like this `$(env:variable_name)`. For example: `$(env:COMPUTERNAME)` would be replaced with the local computer name.
 
-### Connection Strings and Application Settings
+## Connection Strings and Application Settings
 
 If you are like me, you probably don't want to hardcode any connection string or application setting directly in config files, so you can Build Once, Deploy Anywhere!
 
@@ -54,7 +54,7 @@ A good example of a setting, that is often hardcoded in a config file, is `Conte
 
 To help in such a situation I extended `ConfigReader` with the possibility to replace variables with Connection Strings and Application Settings. On Azure, Connection Strings and Application Settings can be defined per environment in Portal. You can also use VSTS or Octopus to replace those settings.
 
-### How to use it:
+## How to use it:
 
 Similar to environment variables, you have to use a prefix. For connection strings it's cs and for application settings it is as. For example: `$(cs:core)` or `$(as:DictionaryFolder)`
 

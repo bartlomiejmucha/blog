@@ -23,19 +23,19 @@ Size | SET | GET
 
 The test results show that the higher the key size, the fewer requests Redis can handle. The results show that on average if the key size is 10 times higher then the request limit is 10 times smaller. In other words, you can divide 1-KB RPS provided by Microsoft in the table by your average key size and you will get a number of requests for that key size.
 
-### How to check if you are hitting the RPS limit?
+## How to check if you are hitting the RPS limit?
 
 Azure Redis provides a metric that we can use for that. First, let's pick some point in time when you experienced some timeouts or just a high number of *Total Operations*.
 
 I had such a situation recently. Below images are from a real project:
 
-![Redis RPS total operations](/assets/images/posts/035/redis-rps-total-operations.png)
+![Redis RPS total operations](/assets/images/posts/035/redis-rps-total-operations.png){: loading="lazy" width="2674" height="1491"}
 
 The chart displays **Total Operations (Sum)** and **Operations Per Second (Max)** with 1-minute aggregation. For this particular point in time, there were 69430 operations (in one minute). If we divide it by 60 seconds we will get 1157 operations per second on average for that particular minute. Operations Per Second (Max) is 1220. So these two metrics show quite the same number of requests per second.
 
 Now let's calculate the average key size. To do this we can use **Used Memory (Max)** and **Total Keys (Max)** metrics.
 
-![Redis RPS used memory](/assets/images/posts/035/redis-rps-used-memory.png)
+![Redis RPS used memory](/assets/images/posts/035/redis-rps-used-memory.png){: loading="lazy" width="1400" height="781"}
 
 Used Memory (Max) is 247.9 MB. Multiply that by 1024 to get value in KB: 247.9 * 1024 = 253849 KB. Now divide it by Total Keys (Max): 253849 / 8190 = 31 KB.
 

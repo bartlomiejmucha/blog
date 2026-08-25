@@ -24,7 +24,7 @@ If you host your application on a 64-bit environment and if you have a lot of RA
 
 Without cache size limits the memory consumption will grow higher and higher over time. How high it will go depends on the size of your solution (mainly number of items), so your memory diagram can look something like this:
 
-![Memory consumption over time](/assets/images/posts/012/memory-consumption-over-time.jpg)
+![Memory consumption over time](/assets/images/posts/012/memory-consumption-over-time.jpg){: loading="lazy" width="1017" height="413"}
 
 While changing this setting can improve your application's performance, on the other hand, you should monitor your system to prevent Sitecore from consuming too much memory. New stuff will be added to the cache, but the old one will not be removed, so at some point, you can run out of free RAM and get `OutOfMemory` errors. In the worst case, your application can be restarted.
 
@@ -33,19 +33,19 @@ Your application can be automatically restarted by Azure Platform if your applic
 
 Following is the real world example from one of my projects. I restarted the application, started smart publish of the whole content tree and at the end more than 1M elements have been published. Memory consumption reached 12GB. Sometimes it can go even higher and then Azure restarts the application:
 
-![Memory consumption after smart publish](/assets/images/posts/012/memory-consumption-after-smart-publish.jpg)
+![Memory consumption after smart publish](/assets/images/posts/012/memory-consumption-after-smart-publish.jpg){: loading="lazy" width="2620" height="804"}
 
 Here is another print screen from dotMemory. Snapshots have been taken after application restart but before smart publish, then after 53k, 104k, 151k published elements. As you can see the number of objects stored in memory increases about 4,5M for every 50k published elements:
 
-![Memory snapshot comparison from dotmemory](/assets/images/posts/012/memory-snapshot-comparison-from-dot-memory.jpg)
+![Memory snapshot comparison from dotmemory](/assets/images/posts/012/memory-snapshot-comparison-from-dot-memory.jpg){: loading="lazy" width="1541" height="662"}
 
 Below is the screenshot of the details of "after 151k" snapshot. The memory is used mostly by three `SqlServerDataProvider` objects. Those three objects are for three Sitecore databases: core, master and web. There is also a lot of wasted memory by duplicated string values. For example, if you have 1M product items and half of them is in Approved workflow state and the other half is in Draft state, then the IDs of those two workflow states can be duplicated by 0,5M times for each one.
 
-![Memory snapshot details](/assets/images/posts/012/memory-snapshot-details.jpg)
+![Memory snapshot details](/assets/images/posts/012/memory-snapshot-details.jpg){: loading="lazy" width="1542" height="1110"}
 
 Fortunately, there are out of the box ways to improve memory consumption in **Sitecore**.
 
-### #1 Enable Sitecore.Interning
+## #1 Enable Sitecore.Interning
 
 The following setting enables interning mechanisms that should reduce memory consumption. This is done by reusing immutable objects like strings or IDs instead of creating new ones:
 
@@ -94,15 +94,15 @@ If you enable it, Sitecore will try to reuse values for fields from the followin
 
 Getting back to my real world example, this is how the memory consumption chart looked after I enabled those two settings. As you can see the memory consumption is lower by about 4GB this time.
 
-![Memory consumption after smart publish with interning enabled](/assets/images/posts/012/memory-consumption-after-smart-publish-with-interning-enabled.jpg)
+![Memory consumption after smart publish with interning enabled](/assets/images/posts/012/memory-consumption-after-smart-publish-with-interning-enabled.jpg){: loading="lazy" width="2798" height="811"}
 
 And this is how it looks in dotMemory. After 150k it has 9M objects stored in memory less than before:
 
-![Memory snapshot comparison from dotmemory with intrning enabled](/assets/images/posts/012/memory-snapshot-comparison-from-dot-memory-with-interning-enabled.jpg)
+![Memory snapshot comparison from dotmemory with intrning enabled](/assets/images/posts/012/memory-snapshot-comparison-from-dot-memory-with-interning-enabled.jpg){: loading="lazy" width="1374" height="509"}
 
 The interning mechanism is very fast so you shouldn't see any performance issues when you enabled it. The price we pay is one `ConcurrentDictionary` lookup per field and it is not even visible during the dotTrace profiling. I also heard that Sitecore considers including interning by default for future versions of the product.
 
-### #2 Use MemoryHealthMonitor
+## #2 Use MemoryHealthMonitor
 
 If you enabled interning mechanism and you still worry about memory consumption you can configure `MemoryHealthMonitor`. In case that your memory consumption exceeds the defined Threshold, memory monitor can clear your Sitecore cache and then force garbage collection. It is better than application restart, right?
 

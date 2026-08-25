@@ -10,7 +10,7 @@ If you are reading this, then the title did the job, especially this "the best" 
 
 Some time ago I created a new repository on GitHub called [Square](https://github.com/bartlomiejmucha/Square). It is going to be a place with all my Sitecore ideas. It was shortly after Sitecore 9 release and I was playing with SIF framework so I started implementing installation script. First I copied a script from official documentation, but since then, the script evolved.
 
-### How is it different than the original one?
+## How is it different than the original one?
 
 Compared to official scripts, the Square installation script does additional things like:
 
@@ -33,7 +33,7 @@ After installation you will get root installation folder (like C:\Websites\Squar
 - solr subfolder like C:\Websites\Square\solr,
 - sitecore subfolder like C:\Websites\Square\sitecore.
 
-### How to use it?
+## How to use it?
 
 If you are interested, go to my [Square](https://github.com/bartlomiejmucha/Square) repository and read the README file. 
 

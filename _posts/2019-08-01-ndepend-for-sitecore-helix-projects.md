@@ -10,7 +10,7 @@ NDepend is a tool for static code analysis. It can tell how good or bad the code
 
 Helix is a set of overall design principles and conventions. Here is how we can use NDepend to keep track of them:
 
-### Acyclic Dependencies Principle
+## Acyclic Dependencies Principle
 
 > The dependency graph of packages must have no cycles.
 >
@@ -18,13 +18,13 @@ Helix is a set of overall design principles and conventions. Here is how we can 
 
 NDepend already has two default rules for this: `Avoid namespace dependency cycles` and `Avoid namespaces mutually dependent`. Both rules are under Architecture group. Here are links to NDependent Rules Explorer website: [rule1](https://www.ndepend.com/default-rules/NDepend-Rules-Explorer.html?ruleid=ND1400#!) and [rule2](https://www.ndepend.com/default-rules/NDepend-Rules-Explorer.html?ruleid=ND1401#!).
 
-![NDepend ADP rules](/assets/images/posts/030/ndepend_adp_rules.jpg)
+![NDepend ADP rules](/assets/images/posts/030/ndepend_adp_rules.jpg){: loading="lazy" width="1730" height="513"}
 
 To find dependency cycles you can also use NDepend Dependency Graph or Dependency Matrix views. Here is a nice video about it:
 
 {% include youtube-embed.html url="https://www.youtube-nocookie.com/embed/nH-tB-HMNsE" %}
 
-### Stable Dependency Principle
+## Stable Dependency Principle
 
 > The dependencies between packages should be in the direction of the stability of the packages. A package should only depend upon packages that are more stable than it is.
 >
@@ -51,11 +51,11 @@ select new {project, invalidReferences}
 
 To create a new rule, click *Create Rule* button then enter a query into Queries and Rules Edit window:
 
-![NDepend create a rule](/assets/images/posts/030/ndepend_create_a_rule.jpg)
+![NDepend create a rule](/assets/images/posts/030/ndepend_create_a_rule.jpg){: loading="lazy" width="1730" height="513"}
 
-![NDepend QR edit](/assets/images/posts/030/ndepend_qr_edit.jpg)
+![NDepend QR edit](/assets/images/posts/030/ndepend_qr_edit.jpg){: loading="lazy" width="1201" height="510"}
 
-### Stable Abstractions Principle
+## Stable Abstractions Principle
 
 > Abstractness increases with stability.
 >
@@ -63,8 +63,8 @@ To create a new rule, click *Create Rule* button then enter a query into Queries
 
 NDepend has a default rule for checking this. It’s called `Assemblies that don’t satisfy the Abstractness/Instability` principle under the Architecture group. And here is the link with the rule details: [link](https://www.ndepend.com/default-rules/NDepend-Rules-Explorer.html?ruleid=ND1407#!).
 
-![NDepend SAP rule](/assets/images/posts/030/ndpend_sap_rule.jpg)
+![NDepend SAP rule](/assets/images/posts/030/ndpend_sap_rule.jpg){: loading="lazy" width="1735" height="518"}
 
-### More info
+## More info
 
 Of course, NDepend has much more [features](https://www.ndepend.com/features/). On the website, there are [walkthrough videos](https://www.ndepend.com/docs/videos) that explain features pretty well.
