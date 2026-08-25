@@ -1,0 +1,28 @@
+{% assign latest = site.posts.first %}
+<section class="mx-auto max-w-6xl px-6 pt-20 pb-16 sm:pt-32 sm:pb-24">
+	<div class="grid items-center gap-10 lg:grid-cols-12 lg:gap-16">
+		<div class="lg:col-span-7">
+			<p class="mb-6 text-xs uppercase tracking-[0.25em] text-ink/45">{{ site.title }} · since 2014</p>
+			<h1 class="text-5xl leading-[1.05] tracking-tight sm:text-6xl">
+				Notes from <span class="font-serif italic">inside the build</span> — Sitecore, MSBuild, Azure.
+			</h1>
+			<div class="buildlog mt-8">
+				<div><span class="prompt">$</span> msbuild Blog.sln /t:Publish</div>
+				<div>Restoring 2014..{{ site.time | date: "%Y" }} — {{ site.posts | size }} articles</div>
+				<div>Sitecore MVP Technology 2019 — {{ site.author }}</div>
+				<div>Build succeeded.<span class="caret"></span></div>
+			</div>
+		</div>
+
+		{% if latest %}
+		<div class="lg:col-span-5">
+			<a href="{{ latest.url | relative_url }}" class="block rounded-2xl bg-ink p-8 text-paper shadow-[0_30px_60px_-30px_rgba(10,10,10,.45)] transition hover:bg-ink/85">
+				<p class="font-mono text-xs uppercase tracking-[0.2em] text-paper/40">Latest article</p>
+				<h2 class="mt-4 text-2xl font-semibold leading-snug tracking-tight">{{ latest.title }}</h2>
+				<p class="mt-6 font-mono text-xs text-paper/70">{{ latest.date | date: "%-d %B %Y" }}{% if latest.tags and latest.tags != empty %} · {{ latest.tags | slice: 0, 2 | join: ' · ' }}{% endif %}</p>
+				<p class="mt-6 border-t border-paper/15 pt-6 text-sm">Read the article →</p>
+			</a>
+		</div>
+		{% endif %}
+	</div>
+</section>

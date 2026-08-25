@@ -1,11 +1,9 @@
-<div id="tags" class="widget clearfix">
-	<h4>Tag Cloud</h4>
-	<div class="tagcloud">
-
+<div id="tags">
+	<p class="text-xs uppercase tracking-[0.25em] text-ink/45">Tag cloud</p>
+	<div class="mt-4 flex flex-wrap gap-x-3 gap-y-2 text-sm">
 		{% assign sorted_tags = site.tags | sort %}
 		{% for tag in sorted_tags %}
-		<a href="{{ '/tags/' | relative_url }}{{ tag[0] | slugify }}/">{{ tag[0] }}</a>
+		<a href="{{ site.tags_url | default: '/en/blog/tags/' | relative_url }}{{ tag[0] | slugify }}/" class="text-ink/55 underline decoration-ink/20 underline-offset-4 transition hover:text-ink hover:decoration-ink">{{ tag[0] }}</a>
 		{% endfor %}
-
 	</div>
 </div>

@@ -1,7 +1,7 @@
-{% if include.tags %}
-<div class="tagcloud clearfix bottommargin">
+{% if include.tags and include.tags != empty %}
+<div class="mt-12 flex flex-wrap gap-2 border-t border-ink/10 pt-8 text-sm">
 	{% for tag in include.tags %}
-	<a href="{{ '/tags/' | relative_url }}{{ tag | slugify }}/">{{ tag }}</a>
+	<a href="{{ site.tags_url | default: '/en/blog/tags/' | relative_url }}{{ tag | slugify }}/" class="rounded-full border border-ink/20 px-4 py-1.5 text-ink/60 transition hover:border-ink hover:text-ink">{{ tag }}</a>
 	{% endfor %}
 </div>
 {% endif %}

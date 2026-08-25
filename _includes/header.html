@@ -1,15 +1,31 @@
-<header id="header" class="full-header" data-mobile-sticky="true">
-	<div id="header-wrap">
-		<div class="container">
-			<div class="header-row">
-
-				<div id="logo" class="mx-auto">
-					<a href="{{ '/' | relative_url }}" class="standard-logo"><img src="{{ '/assets/images/logo.png' | relative_url }}" alt="Hello, programming world!"></a>
-					<a href="{{ '/' | relative_url }}" class="retina-logo"><img src="{{ '/assets/images/logo.png' | relative_url }}" alt="Hello, programming world!"></a>
-				</div>
-
+<header id="header" class="sticky top-0 z-50 border-b border-ink/10 bg-paper/85 backdrop-blur">
+	<div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+		<a href="{{ '/' | relative_url }}" class="text-sm font-semibold tracking-tight">bartlomiejmucha<span class="text-ink/40">.com</span></a>
+		<nav class="hidden items-center text-sm text-ink/60 sm:flex">
+			<div class="flex items-center gap-6">
+				<a class="transition hover:text-ink" href="{{ '/#posts' | relative_url }}">Articles</a>
+				<a class="transition hover:text-ink" href="{{ site.tags_url | default: '/en/blog/tags/' | relative_url }}">Tags</a>
+				<a class="transition hover:text-ink" href="{{ '/#about' | relative_url }}">About</a>
 			</div>
+			<div class="ml-8 flex items-center border-l border-ink/15 pl-8">
+				<a class="group inline-flex items-center gap-1 transition hover:text-ink" href="{{ '/feed.xml' | relative_url }}" title="RSS feed">
+					RSS
+					<svg viewBox="0 0 24 24" fill="currentColor" class="h-3 w-3 text-ink/35 transition group-hover:text-ink/70" aria-hidden="true"><circle cx="5.5" cy="18.5" r="2.5"/><path d="M3 10.5v3.2a7.3 7.3 0 0 1 7.3 7.3h3.2A10.5 10.5 0 0 0 3 10.5Z"/><path d="M3 4v3.2A13.8 13.8 0 0 1 16.8 21H20A17 17 0 0 0 3 4Z"/></svg>
+				</a>
+			</div>
+		</nav>
+		<div class="flex items-center gap-4">
+			<div class="mobile-links">
+				<a class="mobile-links__cta" href="https://apps.bartlomiejmucha.com">Apps
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="h-3 w-3" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>
+				</a>
+			</div>
+			<a class="apps-cta" href="https://apps.bartlomiejmucha.com">
+				Apps
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="h-3 w-3" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>
+			</a>
+			<a href="https://www.linkedin.com/in/bartlomiejmucha/" target="_blank" rel="noopener" class="rounded-full border border-ink px-4 py-1.5 text-sm font-medium transition hover:bg-ink hover:text-paper">Contact</a>
 		</div>
 	</div>
-	<div class="header-wrap-clone"></div>
+	<div id="progress" class="h-0.5 w-0 bg-ink transition-[width] duration-100"></div>
 </header>

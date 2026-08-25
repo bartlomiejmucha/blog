@@ -1,55 +1,342 @@
-.full-header #logo
-{
-    border:none;
+// Hello Programming World — theme styles.
+// Layout/utility classes come from the committed, pre-built assets/css/tailwind.css;
+// run ./script/build-css.sh after changing classes or they will not exist.
+// This file holds the long-form article typography, code highlighting and
+// legacy-markup fallbacks.
+
+$ink: #0a0a0a;
+$paper: #f6f5f2;
+
+/* Shared by .prose pre and by any highlighted block rendered outside .prose. */
+@mixin code-block {
+	background: $ink;
+	color: $paper;
+	border-radius: .75rem;
+	padding: 1.25rem 1.5rem;
+	overflow-x: auto;
+	font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+	font-variant-ligatures: none;
+	font-feature-settings: "liga" 0, "calt" 0;
+	font-size: .85rem;
+	line-height: 1.65;
+
+	code { background: none; padding: 0; font-size: inherit; color: inherit; }
 }
 
-.postcontent.col-lg-9
-{
-    //padding-bottom: 0;
+::selection { background: $ink; color: $paper; }
+
+.rule {
+	background-image: linear-gradient(to right, $ink 0 1px, transparent 1px 100%);
+	background-size: 6px 1px;
 }
 
-.entry 
-{
-    margin-bottom: 0;
+/* ---------- Long-form article body ---------- */
+
+.prose {
+	color: rgba($ink, .78);
+	font-size: 1.0625rem;
+	line-height: 1.75;
+
+	> * + * { margin-top: 1.25em; }
+
+	h2, h3, h4 {
+		color: $ink;
+		font-weight: 600;
+		letter-spacing: -.02em;
+		scroll-margin-top: 6rem;
+		margin-bottom: .2em;
+	}
+	h2 { font-size: 1.75rem; margin-top: 2.5em; }
+	h3 { font-size: 1.35rem; margin-top: 2.25em; }
+	h4 { font-size: 1.1rem; margin-top: 2em; }
+
+	a {
+		color: $ink;
+		text-decoration: underline;
+		text-underline-offset: 3px;
+		text-decoration-color: rgba($ink, .3);
+		&:hover { text-decoration-color: $ink; }
+	}
+
+	strong { color: $ink; font-weight: 600; }
+
+	ul {
+		list-style: none;
+		padding-left: 0;
+		> li {
+			position: relative;
+			padding-left: 1.5rem;
+			&::before { content: "—"; position: absolute; left: 0; color: rgba($ink, .3); }
+		}
+	}
+	ol { list-style: decimal; padding-left: 1.25rem; }
+	li + li { margin-top: .4em; }
+	li > ul, li > ol { margin-top: .4em; }
+
+	blockquote {
+		border-left: 2px solid $ink;
+		padding-left: 1.25rem;
+		font-family: 'Instrument Serif', Georgia, serif;
+		font-style: italic;
+		font-size: 1.3rem;
+		line-height: 1.5;
+		color: rgba($ink, .7);
+	}
+
+	code {
+		font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+		// No coding ligatures: `!=` must read as `!=`, not `≠`.
+		font-variant-ligatures: none;
+		font-feature-settings: "liga" 0, "calt" 0;
+		font-size: .85em;
+		background: rgba($ink, .06);
+		padding: .15em .4em;
+		border-radius: .25rem;
+	}
+
+	pre { @include code-block; }
+
+	img { border-radius: .75rem; border: 1px solid rgba($ink, .1); max-width: 100%; height: auto; }
+	figcaption {
+		margin-top: .6rem;
+		font-size: .75rem;
+		text-transform: uppercase;
+		letter-spacing: .18em;
+		color: rgba($ink, .45);
+	}
+
+	table { width: 100%; border-collapse: collapse; font-size: .95rem; display: block; overflow-x: auto; }
+	th, td { text-align: left; padding: .6rem .75rem; border-bottom: 1px solid rgba($ink, .1); }
+	th { font-weight: 600; color: $ink; }
+
+	hr { border: 0; height: 1px; background: rgba($ink, .12); margin: 3em 0; }
 }
 
-.entry::after 
-{
-    background-color: inherit;
+/* ---------- Rouge syntax highlighting (dark blocks) ---------- */
+
+/* Rouge nests <div class="highlight"><pre class="highlight">, so these rules are
+   scoped by element: the div is the rounded frame, the pre is the scroll container.
+   Do not collapse them into a bare `.highlight` — that clips the pre's overflow. */
+div.highlight,
+figure.highlight {
+	margin: 1.5em 0;
+	background: $ink;
+	border-radius: .75rem;
+
+	> pre, .highlight > pre { margin: 0; border-radius: .75rem; }
+	> .highlight { margin: 0; background: none; }
 }
 
-.single-post ul 
-{
-    padding-left: 2em;
+pre.highlight { @include code-block; }
+
+pre.highlight,
+.prose pre {
+	overflow-x: auto;
+	overscroll-behavior-x: contain;
+
+	/* Keep the scrollbar visible on macOS, where overlay scrollbars hide it. */
+	scrollbar-width: thin;
+	scrollbar-color: rgba($paper, .35) transparent;
+
+	&::-webkit-scrollbar { height: 8px; }
+	&::-webkit-scrollbar-track { background: transparent; }
+	&::-webkit-scrollbar-thumb {
+		background: rgba($paper, .28);
+		border-radius: 4px;
+		&:hover { background: rgba($paper, .45); }
+	}
 }
 
-.highlight 
-{
-    margin: 0 0 2rem 0;
-    background-color: #f8f8f8;
-    color: #555555;
-    padding: 0.5rem;
+.highlight {
+	.c, .c1, .cm, .cs, .cd { color: #7c8a80; font-style: italic; }
+	.k, .kd, .kn, .kp, .kr, .kt, .kc { color: #c3a6ff; }
+	.s, .s1, .s2, .sb, .sc, .sd, .se, .sh, .si, .sx, .sr { color: #9ecf8a; }
+	.na, .nv, .vi, .vg, .vc { color: #7fd1e8; }
+	.nc, .nn, .no { color: #f2c97d; }
+	.nf, .nb { color: #f2c97d; }
+	.nt { color: #7fd1e8; }
+	.m, .mi, .mf, .mh, .mo, .il { color: #f0a67a; }
+	.o, .ow, .p { color: rgba($paper, .75); }
+	.err { color: #ff8f8f; }
+	.gd { color: #ff8f8f; }
+	.gi { color: #9ecf8a; }
 }
 
-.highlight .highlight
-{
-    margin: 0;
+/* ---------- Sidebar about-me markdown ---------- */
+
+.widget-about {
+	h1, h2, h3, h4, h5, h6 { display: none; }
+	p { margin-top: .75rem; line-height: 1.7; }
+	img { margin-top: 1rem; max-width: 160px; height: auto; }
+	a { color: $ink; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba($ink, .3); }
 }
 
-figure.highlight pre, div.highlight pre
-{
-    margin-bottom: 0;
+/* ---------- Video embeds ---------- */
+
+.video-wrapper { position: relative; width: 100%; padding-top: 56.25%; }
+.video-iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+
+/* ---------- Fallbacks for legacy page markup on the content branch ---------- */
+
+.single-post {
+	.entry-title { display: none; }
+
+	.entry-content {
+		color: rgba($ink, .78);
+		line-height: 1.75;
+		> * + * { margin-top: 1.25em; }
+		a { color: $ink; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba($ink, .3); }
+	}
 }
 
-.video-wrapper
-{
-    width:100%;
-    position:relative;
-    padding:0;
+.tagcloud {
+	display: flex;
+	flex-wrap: wrap;
+	gap: .5rem .75rem;
+	font-size: .9rem;
+
+	a {
+		color: rgba($ink, .55);
+		text-decoration: underline;
+		text-underline-offset: 4px;
+		text-decoration-color: rgba($ink, .2);
+		&:hover { color: $ink; text-decoration-color: $ink; }
+	}
+	small { color: rgba($ink, .35); }
 }
 
-.video-iframe
-{
-    width: 100vw;
-    height: calc(100vw/1.77777778);
+.tagged-posts {
+	list-style: none;
+	padding-left: 0;
+
+	li { border-bottom: 1px solid rgba($ink, .1); padding: 1rem 0; }
+	a { color: $ink; letter-spacing: -.01em; font-size: 1.1rem; }
+	small { color: rgba($ink, .45); margin-left: .5rem; }
+}
+
+/* ---------- Hero build log ---------- */
+
+.buildlog {
+	border-left: 2px solid $ink;
+	padding-left: 1.15rem;
+	font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+	font-size: .82rem;
+	line-height: 1.9;
+	overflow-x: auto;
+
+	.prompt { color: rgba($ink, .4); }
+	div { color: rgba($ink, .72); white-space: nowrap; }
+	div:first-child { color: $ink; }
+
+	.caret {
+		display: inline-block;
+		width: .55em;
+		height: 1em;
+		background: $ink;
+		vertical-align: -.15em;
+		animation: buildlog-caret 1.1s steps(1) infinite;
+	}
+}
+
+@keyframes buildlog-caret { 50% { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+	.buildlog .caret { animation: none; }
+}
+
+/* ---------- Footer contact card ---------- */
+
+.contact-card {
+	border: 1px solid rgba($paper, .2);
+	border-radius: 1rem;
+	padding: 1.75rem;
+	font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+	font-size: .82rem;
+	line-height: 2;
+
+	.row {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		gap: 1.5rem;
+		padding: .35rem 0;
+		border-bottom: 1px solid rgba($paper, .12);
+		&:last-child { border-bottom: 0; }
+	}
+	.k {
+		color: rgba($paper, .4);
+		text-transform: uppercase;
+		letter-spacing: .14em;
+		font-size: .7rem;
+	}
+	a {
+		color: rgba($paper, .85);
+		text-decoration: none;
+		overflow-wrap: anywhere;
+		&:hover { color: $paper; }
+	}
+}
+
+/* ---------- Apps / RSS links in the header bar (below the sm breakpoint) ---------- */
+
+.mobile-links {
+	display: flex;
+	align-items: center;
+	gap: .9rem;
+	font-size: .8rem;
+	color: rgba($ink, .6);
+
+	a {
+		display: inline-flex;
+		align-items: center;
+		gap: .25rem;
+		white-space: nowrap;
+		color: inherit;
+		text-decoration: none;
+		&:hover { color: $ink; }
+	}
+	svg { color: rgba($ink, .35); }
+
+	/* Apps is the primary destination in the bar, so it gets the solid pill. */
+	.mobile-links__cta {
+		border-radius: 9999px;
+		background: $ink;
+		color: $paper;
+		font-weight: 500;
+		padding: .35rem .75rem;
+		&:hover { color: $paper; background: rgba($ink, .85); }
+		svg { color: rgba($paper, .6); }
+	}
+}
+
+@media (min-width: 640px) {
+	.mobile-links { display: none; }
+}
+
+/* ---------- Apps call-to-action in the header bar (sm and up) ---------- */
+
+.apps-cta {
+	display: none;
+	align-items: center;
+	gap: .375rem;
+	white-space: nowrap;
+	border-radius: 9999px;
+	background: $ink;
+	color: $paper;
+	font-size: .875rem;
+	font-weight: 500;
+	padding: .375rem 1rem;
+	text-decoration: none;
+	transition: background-color .15s ease;
+
+	svg { color: rgba($paper, .6); transition: color .15s ease; }
+	&:hover {
+		background: rgba($ink, .85);
+		color: $paper;
+		svg { color: $paper; }
+	}
+}
+
+@media (min-width: 640px) {
+	.apps-cta { display: inline-flex; }
 }

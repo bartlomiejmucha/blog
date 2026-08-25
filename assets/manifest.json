@@ -1,7 +1,8 @@
 ---
 ---
 {
-    "name": "",
+    "name": "{{ site.title }}",
+    "short_name": "{{ site.title }}",
     "icons": [
         {
             "src": "{{ '/assets/images/android-chrome-192x192.png' | relative_url }}",
@@ -14,7 +15,7 @@
             "type": "image/png"
         }
     ],
-    "theme_color": "#ffffff",
-    "background_color": "#ffffff",
+    "theme_color": "#f6f5f2",
+    "background_color": "#f6f5f2",
     "display": "standalone"
 }

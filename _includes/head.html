@@ -1,0 +1,49 @@
+{%- if page.seo_title and page.seo_title != empty -%}
+	{%- assign page_title = page.seo_title -%}
+{%- elsif page.title and page.title != empty -%}
+	{%- assign page_title = page.title | append: ' — ' | append: site.title -%}
+{%- else -%}
+	{%- assign page_title = site.title -%}
+{%- endif -%}
+{%- if page.description and page.description != empty -%}
+	{%- assign page_description = page.description -%}
+{%- else -%}
+	{%- assign page_description = site.description -%}
+{%- endif -%}
+
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+<title>{{ page_title }}</title>
+<meta name="description" content="{{ page_description }}" />
+<meta name="author" content="{{ site.author }}" />
+{%- if page.noindex %}
+<meta name="robots" content="noindex, follow" />
+{%- endif %}
+<link rel="canonical" href="{{ page.url | absolute_url }}" />
+<link rel="alternate" type="application/rss+xml" title="{{ site.title }}" href="{{ '/feed.xml' | absolute_url }}" />
+
+<meta property="og:title" content="{{ page_title }}" />
+<meta property="og:description" content="{{ page_description }}" />
+<meta property="og:url" content="{{ page.url | absolute_url }}" />
+{%- if page.image %}
+<meta property="og:image" content="{{ page.image | absolute_url }}" />
+{%- endif %}
+<meta property="og:site_name" content="{{ site.title }}" />
+<meta property="og:type" content="{% if page.layout == 'post' %}article{% else %}website{% endif %}" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:site" content="@bartlomiejmucha" />
+
+<link rel="apple-touch-icon" sizes="180x180" href="{{ '/assets/images/apple-touch-icon.png' | relative_url }}">
+<link rel="icon" type="image/png" sizes="32x32" href="{{ '/assets/images/favicon-32x32.png' | relative_url }}">
+<link rel="icon" type="image/png" sizes="16x16" href="{{ '/assets/images/favicon-16x16.png' | relative_url }}">
+<link rel="manifest" href="{{ '/assets/manifest.json' | relative_url }}">
+<link rel="mask-icon" href="{{ '/assets/images/safari-pinned-tab.svg' | relative_url }}" color="#0a0a0a">
+<meta name="msapplication-config" content="{{ '/assets/browserconfig.xml' | relative_url }}" />
+<meta name="theme-color" content="#f6f5f2">
+
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<!-- tailwind.css is generated from the classes used in _layouts/_includes/theme.js.
+     Rerun ./script/build-css.sh after adding or changing a Tailwind class. See README.md. -->
+<link rel="stylesheet" href="{{ '/assets/css/tailwind.css' | relative_url }}" type="text/css" />
+<link rel="stylesheet" href="{{ '/assets/css/blog.css' | relative_url }}" type="text/css" />

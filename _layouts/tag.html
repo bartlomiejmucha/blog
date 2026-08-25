@@ -1,25 +1,16 @@
 ---
 layout: page
 ---
-<div class="single-post mb-0">
-	<div class="entry clearfix">
-		<div class="entry-title">
-			<h2>Posts tagged &ldquo;{{ page.tag }}&rdquo;</h2>
-		</div>
-		<div class="entry-content mt-0">
+{% assign tagged_posts = site.tags[page.tag] %}
+<section>
+	<p class="text-xs uppercase tracking-[0.25em] text-ink/45">{{ tagged_posts | size }} article{% if tagged_posts.size != 1 %}s{% endif %}</p>
+	<h1 class="mt-4 text-4xl leading-[1.08] tracking-tight sm:text-5xl">Tagged <span class="font-serif italic">{{ page.tag }}</span></h1>
 
-			{% assign tagged_posts = site.tags[page.tag] %}
-			<ul class="tagged-posts">
-				{% for post in tagged_posts %}
-				<li>
-					<a href="{{ post.url | relative_url }}">{{ post.title }}</a>
-					<small>&mdash; {{ post.date | date: "%B %-d, %Y" }}</small>
-				</li>
-				{% endfor %}
-			</ul>
-
-			<p class="topmargin-sm"><a href="{{ '/tags/' | relative_url }}">&larr; All tags</a></p>
-
-		</div>
+	<div class="mt-12">
+		{% for post in tagged_posts %}
+		{% include post-summary-no-hero.html url=post.url title=post.title date=post.date tags=post.tags %}
+		{% endfor %}
 	</div>
-</div>
+
+	<p class="mt-10"><a href="{{ site.tags_url | default: '/en/blog/tags/' | relative_url }}" class="text-sm font-medium underline decoration-ink/30 underline-offset-4 transition hover:decoration-ink">← All tags</a></p>
+</section>

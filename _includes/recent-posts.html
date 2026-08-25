@@ -1,11 +1,28 @@
-<div id="posts" class="row grid-container gutter-40">
+<section id="posts" class="scroll-mt-28">
 
-	{% for post in site.posts %}
-		{% if post.image %}
-			{% include post-summary-full.html hero-image=post.image hero-image-alt=post.image-alt url=post.url title=post.title date=post.date author=site.author summary=post.description %}
-		{% else %}
-			{% include post-summary-no-hero.html url=post.url title=post.title date=post.date author=site.author summary=post.description %}
-		{% endif %}
-	{% endfor %}
+	<div class="flex flex-wrap items-baseline justify-between gap-4">
+		<h2 class="text-3xl font-semibold tracking-tight sm:text-4xl">Everything <span class="font-serif italic text-ink/60">written so far</span></h2>
+		<a href="{{ site.tags_url | default: '/en/blog/tags/' | relative_url }}" class="text-sm text-ink/55 underline decoration-ink/25 underline-offset-4 transition hover:text-ink hover:decoration-ink">Browse by tag →</a>
+	</div>
 
-</div>
+	<p class="mt-6 flex items-center gap-2.5 text-sm text-ink/50">
+		<span class="relative flex h-2 w-2"><span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-ink/40"></span><span class="relative inline-flex h-2 w-2 rounded-full bg-ink/60"></span></span>
+		{{ site.posts | size }} articles.
+		<a href="{{ '/feed.xml' | relative_url }}" class="underline decoration-ink/25 underline-offset-4 transition hover:text-ink hover:decoration-ink">RSS</a>
+	</p>
+
+	<div class="mt-10">
+		{% assign current_year = '' %}
+		{% for post in site.posts %}
+			{% assign post_year = post.date | date: "%Y" %}
+			{% if post_year != current_year %}
+				{% assign current_year = post_year %}
+				<div class="mt-14 flex items-baseline gap-4 border-b border-ink/10 pb-3 first:mt-0">
+					<span class="font-serif text-3xl text-ink/25">{{ post_year }}</span>
+				</div>
+			{% endif %}
+			{% include post-summary-no-hero.html url=post.url title=post.title date=post.date tags=post.tags %}
+		{% endfor %}
+	</div>
+
+</section>

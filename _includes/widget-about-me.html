@@ -1,6 +1,7 @@
-<div class="widget clearfix">
-
-	{% capture about_me %}{% include about-me.md %}{% endcapture %}
-	{{ about_me | markdownify }}
-
+<div id="about" class="scroll-mt-28">
+	<p class="text-xs uppercase tracking-[0.25em] text-ink/45">About</p>
+	<div class="widget-about mt-4 text-ink/70">
+		{% capture about_me %}{% include about-me.md %}{% endcapture %}
+		{{ about_me | markdownify }}
+	</div>
 </div>

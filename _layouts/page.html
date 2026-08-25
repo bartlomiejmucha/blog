@@ -1,107 +1,52 @@
 <!DOCTYPE html>
-<html dir="ltr" lang="en-US">
+<html dir="ltr" lang="en-US" class="scroll-smooth">
 <head>
+	<meta charset="utf-8" />
+
+	<link rel="preconnect" href="https://consent.cookiebot.com" crossorigin>
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link rel="dns-prefetch" href="https://www.googletagmanager.com">
+
 	{% include cookiebot.html %}
 	{% include google-analytics.html %}
-
-	<meta charset="utf-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1" />
-	<meta http-equiv="content-type" content="text/html; charset=utf-8" />
-
-	<link href="https://fonts.googleapis.com/css?family=Lato:300,400,400i,700|Poppins:300,400,500,600,700|PT+Serif:400,400i&display=swap" rel="stylesheet" type="text/css" />
-	<link rel="stylesheet" href="{{ '/assets/css/bootstrap.min.css' | relative_url }}" type="text/css" />
-	<link rel="stylesheet" href="{{ '/assets/css/style.css' | relative_url }}" type="text/css" />
-	<link rel="stylesheet" href="{{ '/assets/css/swiper.min.css' | relative_url }}" type="text/css" />
-	<link rel="stylesheet" href="{{ '/assets/css/dark.css' | relative_url }}" type="text/css" />
-	<link rel="stylesheet" href="{{ '/assets/css/font-icons.css' | relative_url }}" type="text/css" />
-	<link rel="stylesheet" href="{{ '/assets/css/animate.min.css' | relative_url }}" type="text/css" />
-	<link rel="stylesheet" href="{{ '/assets/css/rouge-github.css' | relative_url }}" type="text/css" />
-	<link rel="stylesheet" href="{{ '/assets/css/blog.css' | relative_url }}" type="text/css" />
-
-	{% if page.title %}
-	{% assign page_title = page.title | assign: ' | ' | assign: site.title %}
-	{% else %}
-	{% assign page_title = site.title %}
-	{% endif %}
-	<title>{{ page_title }}</title>
-	{% if page.description %}
-	{% assign page_description = page.description %}
-	{% else %}
-	{% assign page_description = site.description %}
-	{% endif %}
-	<meta name="description" content="{{ page_description }}" />
-	{% if page.tags %}
-		{% assign sorted_tags = page.tags | sort %}
-	{% else %}
-		{% assign sorted_tags = '' | split: ',' %}
-			{% for tag in site.tags %}
-			{% assign sorted_tags = sorted_tags | push: tag[0]%}
-			{% endfor % }
-		{% assign sorted_tags = sorted_tags | sort %}
-	{% endif %}
-    <meta name="keywords" content="{{ sorted_tags | join: ',' }}" />
-	<meta name="author" content="{{ page.author }}" />
-	<link rel="canonical" href="{{ page.url | absolute_url }}" />
-	<link rel="alternate" type="application/rss+xml" title="{{ site.title }}" href="{{ site.baseurl }}/feed.xml" />
-
-	<meta property="og:title" name="og:title" content="{{ page_title }}" />
-    <meta property="og:description" name="og:description" content="{{ page_description }}" />
-    <meta property="og:url" name="og:url" content="{{ page.url | absolute_url}}" />
-	{% if page.image %}
-	<meta property="og:image" name="og:image" content="{{ page.image | absolute_url }}" />
-	{% endif %}
-	<meta property="og:site_name" content="{{ site.title }}" />
-	<meta property="og:type" content="website" />
-
-	<meta name="twitter:card" content="summary" />
-	<meta name="twitter:site" content="@batlomiejmucha" />
-
-	<link rel="apple-touch-icon" sizes="180x180" href="{{ '/assets/images/apple-touch-icon.png' | relative_url }}">
-    <link rel="icon" type="image/png" sizes="32x32" href="{{ '/assets/images/favicon-32x32.png' | relative_url }}">
-    <link rel="icon" type="image/png" sizes="16x16" href="{{ '/assets/images/favicon-16x16.png' | relative_url }}">
-    <link rel="manifest" href="{{ '/assets/manifest.json' | relative_url }}">
-    <link rel="mask-icon" href="{{ '/assets/images/safari-pinned-tab.svg' | relative_url }}" color="#5bbad5">
-	<meta name="msapplication-config" content="{{ '/assets/browserconfig.json' | relative_url }}" />
-    <meta name="theme-color" content="#ffffff">
+	{% include head.html %}
 </head>
 
-<body class="stretched">
+<body class="bg-paper text-ink font-sans antialiased">
 
-	<div id="wrapper" class="clearfix">
+{% include header.html %}
 
-		{% include header.html %}
+{% if page.url == '/' %}
+	{% include hero.html %}
+	<div class="mx-auto max-w-6xl px-6"><div class="rule h-px"></div></div>
+{% elsif page.layout != 'post' and page.layout != 'tag' %}
+	<section class="mx-auto max-w-6xl px-6 pt-16 pb-10 sm:pt-24">
+		<p class="mb-6 text-xs uppercase tracking-[0.25em] text-ink/45"><a href="{{ '/' | relative_url }}" class="hover:text-ink">Home</a>{% if page.title %}<span class="mx-2 text-ink/25">/</span>{{ page.title }}{% endif %}</p>
+		{% if page.title %}<h1 class="max-w-4xl text-4xl leading-[1.08] tracking-tight sm:text-6xl">{{ page.title }}</h1>{% endif %}
+	</section>
+	<div class="mx-auto max-w-6xl px-6"><div class="rule h-px"></div></div>
+{% endif %}
 
-		<section id="content">
-			<div class="content-wrap">
-
-				<div class="container clearfix">
-
-					<!-- <div class="heading-block center">
-						<h1>Recent Articles</h1>
-					</div> -->
-
-					<div class="row gutter-40 col-mb-80">
-						
-						<div class="postcontent col-lg-9">
-							{{ content }}	
-						</div>
-						{% include sidebar.html %}
-						
-					</div>
-
-				</div>
-			</div>
-		</section>
-
-		{% include footer.html %}
-
+<main class="mx-auto max-w-6xl px-6 py-16 sm:py-20">
+	<div class="grid gap-10 lg:grid-cols-12 lg:gap-16">
+		<div class="{% if page.layout == 'post' %}lg:col-span-8 lg:order-1{% else %}lg:col-span-8{% endif %}">
+			{% if page.layout == 'post' or page.layout == 'tag' or page.no_prose %}{{ content }}{% else %}<div class="prose">{{ content }}</div>{% endif %}
+		</div>
+		{% if page.layout == 'post' %}
+			{% include toc.html %}
+		{% else %}
+			{% include sidebar.html %}
+		{% endif %}
 	</div>
+</main>
 
-	<div id="gotoTop" class="icon-angle-up"></div>
+{% include footer.html %}
 
-	<script src="{{ '/assets/js/jquery.min.js' | relative_url }}"></script>
-	<script src="{{ '/assets/js/plugins.min.js' | relative_url }}"></script>
+<button id="gotoTop" aria-label="Back to top" class="fixed bottom-6 right-6 z-50 hidden h-11 w-11 items-center justify-center rounded-full border border-ink/15 bg-paper/90 text-ink shadow-[0_10px_30px_-12px_rgba(10,10,10,.5)] backdrop-blur transition hover:bg-ink hover:text-paper">
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-5 w-5"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+</button>
 
-	<script src="{{ '/assets/js/functions.js' | relative_url }}"></script>
+<script src="{{ '/assets/js/theme.js' | relative_url }}"></script>
 </body>
 </html>

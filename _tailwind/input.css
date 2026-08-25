@@ -1,0 +1,6 @@
+/* Source for assets/css/tailwind.css.
+   Build it with ./script/build-css.sh — the output is committed to the repository,
+   so a class that is not compiled in does not exist on the site. See README.md. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
