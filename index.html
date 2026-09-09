@@ -24,7 +24,7 @@
 <header class="sticky top-0 z-50 border-b border-ink/10 bg-paper/85 backdrop-blur">
   <div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
     <a href="#top" class="text-sm font-semibold tracking-tight">bartlomiejmucha<span class="text-ink/40">.com</span></a>
-    <nav class="hidden gap-6 text-sm text-ink/60 sm:flex">
+    <nav class="hidden gap-6 text-sm text-ink/60 md:flex">
       <a class="transition hover:text-ink" href="#battito">Battito</a>
       <a class="transition hover:text-ink" href="#voice-cockpit">VoiceCockpit</a>
       <a class="transition hover:text-ink" href="#glimpse">Glimpse</a>
@@ -33,11 +33,15 @@
     <div class="flex items-center gap-3 sm:gap-4">
       <!-- Blog is the primary destination in the bar, so it gets the solid pill -
            mirrors .apps-cta / .mobile-links__cta in blog@theme/_sass/blog.scss -->
+      <a class="group inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-ink px-3 py-1.5 text-xs font-medium text-paper transition hover:bg-ink/85 sm:gap-1.5 sm:px-4 sm:text-sm" href="https://edu.bartlomiejmucha.com">
+        Edu
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="h-3 w-3 text-paper/60 transition group-hover:text-paper" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>
+      </a>
       <a class="group inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-ink px-3 py-1.5 text-xs font-medium text-paper transition hover:bg-ink/85 sm:gap-1.5 sm:px-4 sm:text-sm" href="https://bartlomiejmucha.com">
         Blog
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="h-3 w-3 text-paper/60 transition group-hover:text-paper" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>
       </a>
-      <a href="https://www.linkedin.com/in/bartlomiejmucha/" target="_blank" rel="noopener" class="whitespace-nowrap rounded-full border border-ink px-3 py-1.5 text-xs font-medium transition hover:bg-ink hover:text-paper sm:px-4 sm:text-sm">Contact</a>
+      <a href="https://www.linkedin.com/in/bartlomiejmucha/" target="_blank" rel="noopener" class="hidden whitespace-nowrap rounded-full sm:inline-block border border-ink px-3 py-1.5 text-xs font-medium transition hover:bg-ink hover:text-paper sm:px-4 sm:text-sm">Contact</a>
     </div>
   </div>
 </header>
@@ -189,7 +193,7 @@
     </div>
     <div class="lg:col-span-7 lg:order-1">
       <div class="overflow-hidden rounded-2xl border border-ink/10 shadow-[0_30px_60px_-30px_rgba(10,10,10,.45)]">
-        <img src="images/harbor.png" alt="Harbor terminal workspace" class="w-full" loading="lazy" width="1800" height="1179">
+        <img src="images/harbor.png" alt="Harbor terminal workspace" class="w-full" loading="lazy" width="1800" height="1017">
       </div>
     </div>
   </article>

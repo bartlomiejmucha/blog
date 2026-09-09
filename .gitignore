@@ -13,3 +13,6 @@ package-lock.json
 
 # Local archives
 *.zip
+
+# Build output for manual Cloudflare upload (see Makefile)
+dist/
