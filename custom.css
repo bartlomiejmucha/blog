@@ -4,3 +4,45 @@
   background-image: linear-gradient(to right, #0a0a0a 0 1px, transparent 1px 100%);
   background-size: 6px 1px;
 }
+
+/* ---------- Auto-hiding header on mobile ----------
+   Scrolling down slides the bar out of the way; scrolling up brings it back.
+   Never applies from 640px up, where the bar is a single short row. */
+
+#site-header {
+  transition: transform .3s ease;
+  will-change: transform;
+}
+
+#site-header.header--hidden {
+  transform: translateY(-100%);
+}
+
+@media (min-width: 640px) {
+  #site-header.header--hidden { transform: none; }
+}
+
+/* Keep anchor targets clear of the sticky bar. */
+html { scroll-padding-top: 7rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  #site-header { transition: none; }
+}
+
+/* ---------- Mobile tap targets ----------
+   The header pills stay visually small so the bar is one short row; the
+   touch target is padded out vertically to the 44px minimum. Vertical only,
+   so neighbouring pills never overlap each other's hit area. */
+
+@media (max-width: 639px) {
+  .nav-pill { position: relative; }
+  .nav-pill::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 44px;
+    transform: translateY(-50%);
+  }
+}

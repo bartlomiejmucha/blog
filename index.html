@@ -21,27 +21,27 @@
 <body class="bg-paper text-ink font-sans antialiased">
 
 <!-- Nav -->
-<header class="sticky top-0 z-50 border-b border-ink/10 bg-paper/85 backdrop-blur">
-  <div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-    <a href="#top" class="text-sm font-semibold tracking-tight">bartlomiejmucha<span class="text-ink/40">.com</span></a>
-    <nav class="hidden gap-6 text-sm text-ink/60 md:flex">
+<header id="site-header" class="sticky top-0 z-50 border-b border-ink/10 bg-paper/85 backdrop-blur">
+  <div class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:gap-x-4 sm:px-6 sm:py-4">
+    <a href="#top" class="whitespace-nowrap text-sm font-semibold tracking-tight">bartlomiejmucha<span class="text-ink/40">.com</span></a>
+    <nav class="hidden gap-6 text-sm text-ink/60 lg:flex">
       <a class="transition hover:text-ink" href="#battito">Battito</a>
       <a class="transition hover:text-ink" href="#voice-cockpit">VoiceCockpit</a>
       <a class="transition hover:text-ink" href="#glimpse">Glimpse</a>
       <a class="transition hover:text-ink" href="#harbor">Harbor</a>
     </nav>
-    <div class="flex items-center gap-3 sm:gap-4">
+    <div class="flex flex-nowrap items-center gap-2 sm:gap-4">
       <!-- Blog is the primary destination in the bar, so it gets the solid pill -
            mirrors .apps-cta / .mobile-links__cta in blog@theme/_sass/blog.scss -->
-      <a class="group inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-ink px-3 py-1.5 text-xs font-medium text-paper transition hover:bg-ink/85 sm:gap-1.5 sm:px-4 sm:text-sm" href="https://edu.bartlomiejmucha.com">
+      <a class="group nav-pill inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-ink px-3 py-1.5 text-xs font-medium text-paper transition hover:bg-ink/85 sm:gap-1.5 sm:px-4 sm:text-sm" href="https://edu.bartlomiejmucha.com">
         Edu
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="h-3 w-3 text-paper/60 transition group-hover:text-paper" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>
       </a>
-      <a class="group inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-ink px-3 py-1.5 text-xs font-medium text-paper transition hover:bg-ink/85 sm:gap-1.5 sm:px-4 sm:text-sm" href="https://bartlomiejmucha.com">
+      <a class="group nav-pill inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-ink px-3 py-1.5 text-xs font-medium text-paper transition hover:bg-ink/85 sm:gap-1.5 sm:px-4 sm:text-sm" href="https://bartlomiejmucha.com">
         Blog
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="h-3 w-3 text-paper/60 transition group-hover:text-paper" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>
       </a>
-      <a href="https://www.linkedin.com/in/bartlomiejmucha/" target="_blank" rel="noopener" class="hidden whitespace-nowrap rounded-full sm:inline-block border border-ink px-3 py-1.5 text-xs font-medium transition hover:bg-ink hover:text-paper sm:px-4 sm:text-sm">Contact</a>
+      <a href="https://www.linkedin.com/in/bartlomiejmucha/" target="_blank" rel="noopener" class="inline-block whitespace-nowrap nav-pill rounded-full border border-ink px-3 py-1.5 text-xs font-medium transition hover:bg-ink hover:text-paper sm:px-4 sm:text-sm">Contact</a>
     </div>
   </div>
 </header>
@@ -213,6 +213,47 @@
     </div>
   </div>
 </footer>
+
+
+<!-- Auto-hiding header on mobile: down hides the bar, up reveals it. -->
+<script>
+(function () {
+  var header = document.getElementById('site-header');
+  if (!header) return;
+
+  var mobile = window.matchMedia('(max-width: 639px)');
+  var last = window.scrollY;
+  var ticking = false;
+  var TOP_ZONE = 80;   // always visible this close to the top
+  var THRESHOLD = 10;  // ignore jitter and rubber-banding
+
+  function update() {
+    ticking = false;
+    var y = window.scrollY;
+
+    if (!mobile.matches || y <= TOP_ZONE) {
+      header.classList.remove('header--hidden');
+      last = y;
+      return;
+    }
+
+    var delta = y - last;
+    if (Math.abs(delta) < THRESHOLD) return;
+    header.classList.toggle('header--hidden', delta > 0);
+    last = y;
+  }
+
+  window.addEventListener('scroll', function () {
+    if (!ticking) { ticking = true; window.requestAnimationFrame(update); }
+  }, { passive: true });
+
+  // A hidden bar must not stay hidden when the layout switches to desktop.
+  mobile.addEventListener('change', function () {
+    header.classList.remove('header--hidden');
+    last = window.scrollY;
+  });
+}());
+</script>
 
 </body>
 </html>
