@@ -75,3 +75,42 @@
 	addEventListener('resize', tick);
 	tick();
 })();
+
+// Auto-hiding header on mobile: scrolling down slides the bar away, scrolling
+// up brings it back. Disabled from 640px up, where the bar is one short row.
+(function () {
+	var header = document.getElementById('header');
+	if (!header) return;
+
+	var mobile = window.matchMedia('(max-width: 639px)');
+	var last = window.scrollY;
+	var ticking = false;
+	var TOP_ZONE = 80;   // always visible this close to the top
+	var THRESHOLD = 10;  // ignore jitter and rubber-banding
+
+	function update() {
+		ticking = false;
+		var y = window.scrollY;
+
+		if (!mobile.matches || y <= TOP_ZONE) {
+			header.classList.remove('header--hidden');
+			last = y;
+			return;
+		}
+
+		var delta = y - last;
+		if (Math.abs(delta) < THRESHOLD) return;
+		header.classList.toggle('header--hidden', delta > 0);
+		last = y;
+	}
+
+	addEventListener('scroll', function () {
+		if (!ticking) { ticking = true; requestAnimationFrame(update); }
+	}, { passive: true });
+
+	// A hidden bar must not stay hidden when the layout switches to desktop.
+	mobile.addEventListener('change', function () {
+		header.classList.remove('header--hidden');
+		last = window.scrollY;
+	});
+}());
