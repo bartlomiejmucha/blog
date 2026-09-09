@@ -20,3 +20,6 @@ courses/*/tools/
 
 # Local archives
 *.zip
+
+# Build output for manual Cloudflare upload (see Makefile)
+dist/
