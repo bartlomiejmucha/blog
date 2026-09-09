@@ -76,6 +76,7 @@ HEAD = """<meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <title>{title}</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -119,6 +120,7 @@ def lesson_page(L, prev, nxt):
 <body data-lesson="{id}" class="min-h-screen">
 <header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
   <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
     <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
     <div class="hidden flex-1 sm:block">
       <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
@@ -195,7 +197,10 @@ INDEX = """<!doctype html>
 <body class="min-h-screen">
 <header class="border-b border-ink-800">
   <div class="wrap-wide flex items-center justify-between py-4">
-    <span class="font-mono text-sm text-ink-300">LLMs, from first principles</span>
+    <div class="flex items-center gap-3">
+      <a href="../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+      <span class="font-mono text-sm text-ink-300">LLMs from scratch</span>
+    </div>
     <div class="flex items-center gap-3">
       <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
       <span class="pill font-mono">{total} lessons</span>
@@ -243,7 +248,6 @@ INDEX = """<!doctype html>
     </div>
   </section>
 </main>
-<footer class="border-t border-ink-800 py-8 text-center text-xs text-ink-600">Built as a static site. No tracking, no network calls, everything runs in your browser.</footer>
 </body>
 </html>"""
 
