@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>7. Position: how the model knows word order — LLMs from scratch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l07" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 7 / 18</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part II · The transformer</span>
+      <h1 class="text-4xl leading-tight">7. Position: how the model knows word order</h1>
+      <p class="lead">Attention is order-blind by construction. Something has to tell the model that 'dog bites man' differs from 'man bites dog'.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Explain why self-attention is permutation-equivariant</li>
+<li>Compare absolute, learned, and rotary position encodings</li>
+<li>Describe how RoPE encodes relative distance through rotation</li>
+<li>Explain why context-length extension is hard and how it is done</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="the-set-problem" class="scroll-mt-24 text-2xl">The set problem</h2>
+<div class="prose-block">
+<p>Look again at the attention equation. Scores are dot products between queries and keys; the output is a weighted sum. Shuffle the input positions and every score simply moves with them — the computed values are identical. Self-attention treats its input as an unordered <strong>set</strong>.</p>
+<p>That is a genuine problem, since word order carries a great deal of meaning. It is also a genuine feature: it is exactly what allows all positions to be processed in parallel, which is why transformers train so much faster than recurrent networks. The transformer's answer is not to restore sequential processing but to <strong>put position information into the vectors themselves</strong>.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="approach-1-add-a-position-vector" class="scroll-mt-24 text-2xl">Approach 1: add a position vector</h2>
+<div class="prose-block">
+<p>The original 2017 transformer added a fixed sinusoidal vector to each token embedding. Dimension pairs oscillate at geometrically spaced frequencies:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-xs text-ink-100">PE(pos, 2i) = sin(pos / 10000^(2i/d)) &nbsp;&nbsp; PE(pos, 2i+1) = cos(pos / 10000^(2i/d))</p>
+<p>Fast dimensions distinguish neighbouring positions; slow ones distinguish far-apart regions. Together they give every position a unique fingerprint, a bit like the digits of a binary counter running at different rates.</p>
+<p>GPT-2 and BERT instead used <strong>learned</strong> absolute embeddings: one trainable vector per position. Simple and effective, with one fatal limitation — position 4000 has no vector at all if you only trained up to 2048. The model cannot extrapolate one step beyond its training length.</p>
+</div>
+<div class="figure" id="viz-sinusoid"><p class="figure-title">Sinusoidal position encoding</p><p class="figure-sub">Each row is a position, each column a dimension. Notice the frequency gradient left to right.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="approach-2-rotate-the-vectors-rope" class="scroll-mt-24 text-2xl">Approach 2: rotate the vectors (RoPE)</h2>
+<div class="prose-block">
+<p>Rotary position embedding is what essentially every current model uses, and the idea is neat.</p>
+<p>Take the query and key vectors, split them into 2-dimensional pairs, and <strong>rotate each pair by an angle proportional to the position</strong>. Different pairs rotate at different rates, again geometrically spaced — pair <code>i</code> turns by <code>pos / 10000^(2i/d)</code> radians, the same base as the sinusoidal formula above. The first pairs complete a full turn every few tokens; the last ones barely move across the whole context. That spread is what the interpolation methods below act on: stretching the slow pairs buys range, and leaving the fast ones alone keeps neighbouring positions distinguishable.</p>
+<p>The payoff is in what happens to the dot product. Rotating two vectors by angles <code>mθ</code> and <code>nθ</code> makes their dot product depend only on the difference <code>(m − n)</code>. So the attention score between two positions automatically encodes <strong>how far apart they are</strong>, not where they sit absolutely. The same phrase gets the same internal relationships whether it appears at position 10 or position 10,000.</p>
+<p>Other properties that matter in practice:</p>
+<ul>
+  <li>It is applied to Q and K inside every attention layer, not added once at the bottom.</li>
+  <li>It touches no parameters — it is a fixed geometric transform.</li>
+  <li>Attention naturally decays with distance, which is a sensible prior for language.</li>
+  <li>Because the encoding is relative and continuous, you can stretch it after training to extend context.</li>
+</ul>
+</div>
+<div class="figure" id="viz-rope"><p class="figure-title">RoPE as rotation</p><p class="figure-sub">Watch a query/key pair rotate with position and see how the dot product tracks their separation.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="stretching-the-context-window" class="scroll-mt-24 text-2xl">Stretching the context window</h2>
+<div class="prose-block">
+<p>A model trained on 8k tokens does not simply work at 128k. The rotation angles at position 100,000 are outside anything it saw, and quality collapses. The common techniques:</p>
+<ul>
+  <li><strong>Position interpolation</strong> — scale positions down so that 32k tokens occupy the angle range the model was trained on. Positions become fractional. Cheap, and works with a short fine-tune, but it compresses local resolution.</li>
+  <li><strong>NTK-aware scaling / YaRN</strong> — scale the frequency bands unevenly: leave high-frequency (local) dimensions alone and stretch the low-frequency (global) ones. Preserves local precision much better.</li>
+  <li><strong>Long-context fine-tuning</strong> — after any of the above, train on genuinely long documents so the model learns to use the range.</li>
+</ul>
+<div class="note note-warn"><p class="text-sm"><strong>Advertised context ≠ usable context.</strong> A model can accept 200k tokens and still retrieve poorly from the middle of them. The well-documented "lost in the middle" effect shows retrieval accuracy dipping for material in the middle of a long context relative to the beginning and end. Always measure on your own task rather than trusting the headline number.</p></div>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">Attention treats its input as a set. Position must be injected explicitly — historically by adding sinusoidal or learned vectors, now almost always by rotating query and key vectors by an angle proportional to position (RoPE), which makes attention scores depend on relative distance.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why does a transformer need explicit position information at all?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Because the softmax cannot handle long sequences</button>
+<button type="button" data-opt="1">Because self-attention computes the same result under any permutation of its inputs</button>
+<button type="button" data-opt="2">Because the tokenizer discards word order</button>
+<button type="button" data-opt="3">Because the residual stream overwrites earlier tokens</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Attention is permutation-equivariant — it sees a set. That property is what makes full parallelism possible, and position encoding is the price paid for it.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What is the key property of RoPE that absolute learned embeddings lack?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It uses fewer parameters at the embedding layer</button>
+<button type="button" data-opt="1">Attention scores end up depending on the relative distance between positions rather than absolute indices</button>
+<button type="button" data-opt="2">It removes the need for a causal mask</button>
+<button type="button" data-opt="3">It lets the model attend to future tokens</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Rotating queries and keys by position-proportional angles makes their dot product a function of the difference of positions. Relative encoding generalises across the sequence in a way absolute indices do not.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="multi" data-answer="0,2,3">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which are true about extending a model's context window? Select all.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Position interpolation squeezes longer sequences into the trained angle range</button>
+<button type="button" data-opt="1">A model can always be run at any length with no adaptation because RoPE is parameter-free</button>
+<button type="button" data-opt="2">YaRN-style methods scale different frequency bands differently to preserve local detail</button>
+<button type="button" data-opt="3">Retrieval accuracy can be worse for content in the middle of a long context</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Parameter-free does not mean length-agnostic: the model has only ever seen a limited range of rotation angles, and quality falls apart outside it without interpolation plus fine-tuning.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="fill" data-answer="rope|rotary position embedding|rotary positional embedding|rotary" data-placeholder="four letters">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">type the term</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What is the abbreviation for the position encoding scheme that rotates query and key vectors by an angle proportional to position?</p></div>
+<div class="note text-sm" data-ex-explain hidden>RoPE — rotary position embedding. Introduced in the RoFormer paper and now near-universal in decoder-only LLMs.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A model was trained with learned absolute position embeddings up to 2048 tokens. You feed it 3000 tokens. What happens?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It works but more slowly</button>
+<button type="button" data-opt="1">Positions beyond 2048 have no trained embedding, so behaviour there is undefined and output degrades badly</button>
+<button type="button" data-opt="2">The tokenizer truncates automatically to 2048</button>
+<button type="button" data-opt="3">The extra positions are handled by the causal mask</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>There is literally no row in the position table for index 2048 and beyond. This inability to extrapolate is a large part of why the field moved to relative schemes like RoPE.</div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="06-multi-head-attention.html" data-nav-prev>← 6. Multi-head attention</a>
+      <a class="btn btn-primary" href="08-the-transformer-block.html" data-nav-next>8. The transformer block →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l07.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>9. The full forward pass — LLMs from scratch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l09" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 9 / 18</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part II · The transformer</span>
+      <h1 class="text-4xl leading-tight">9. The full forward pass</h1>
+      <p class="lead">Assemble everything: text in at the top, a probability distribution out at the bottom, with every shape accounted for.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Trace a tensor's shape through an entire model</li>
+<li>Explain the unembedding step and logits</li>
+<li>Describe what changes as depth increases</li>
+<li>Explain why only the last position matters at generation time</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="end-to-end-with-shapes" class="scroll-mt-24 text-2xl">End to end, with shapes</h2>
+<div class="prose-block">
+<p>Take a 7-token prompt through a model with <code>d_model = 4096</code>, 32 layers, vocabulary 128,000.</p>
+<div class="overflow-x-auto"><table>
+<tr><th>Step</th><th>Operation</th><th>Shape after</th></tr>
+<tr><td>1</td><td>Tokenize the text</td><td>[7] integer ids</td></tr>
+<tr><td>2</td><td>Embedding lookup</td><td>[7, 4096]</td></tr>
+<tr><td>3</td><td>Block 1 … block 32 (RoPE applied inside each attention)</td><td>[7, 4096] throughout</td></tr>
+<tr><td>4</td><td>Final normalisation</td><td>[7, 4096]</td></tr>
+<tr><td>5</td><td>Unembedding projection [4096, 128000]</td><td>[7, 128000] logits</td></tr>
+<tr><td>6</td><td>Take the last row, softmax it</td><td>[128000] probabilities</td></tr>
+</table></div>
+<p>The single most important thing on that table: <strong>the shape never changes through the entire stack</strong>. Every block maps <code>[T, d]</code> to <code>[T, d]</code>. The blocks are shape-compatible with each other, which is why you can stack 32 or 96 of them without altering anything else.</p>
+</div>
+<div class="figure" id="viz-forward"><p class="figure-title">Watch a tensor flow</p><p class="figure-sub">Step through the pass and see the shape and a sample of values at each stage.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="logits-and-the-unembedding" class="scroll-mt-24 text-2xl">Logits and the unembedding</h2>
+<div class="prose-block">
+<p>The final projection produces one <strong>logit</strong> per vocabulary entry per position — an unnormalised score. Softmax converts a row of logits into probabilities:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">P(token i) = exp(logit_i) / Σⱼ exp(logit_j)</p>
+<p>If the output matrix is tied to the input embedding table (common), each logit is literally the dot product of the final residual vector with a token's embedding. The prediction becomes: <em>which token's embedding has the largest dot product with my final vector?</em> Lesson 3's geometry, closing the loop — and note it is the dot product, not the cosine, so a token whose embedding is long is easier to predict than a short one pointing the same way.</p>
+<p>Note that logits themselves are what get manipulated at generation time — temperature, top-k, penalties all operate on logits before the softmax. That is Lesson 10.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="what-the-layers-do-roughly" class="scroll-mt-24 text-2xl">What the layers do, roughly</h2>
+<div class="prose-block">
+<p>Probing studies across many models find a consistent rough progression. Treat it as a tendency, not a law — the boundaries are soft and features are distributed.</p>
+<ul>
+  <li><strong>Early layers</strong> resolve surface form: detokenization (stitching word-pieces back into a concept), part of speech, immediate local context.</li>
+  <li><strong>Middle layers</strong> carry the heaviest lifting: syntax, entity tracking, factual recall, coreference. Interpretability work locates much factual knowledge in mid-layer feed-forward networks.</li>
+  <li><strong>Late layers</strong> move from "what is being said" to "what token comes next", sharpening toward the vocabulary — increasingly task- and output-specific.</li>
+</ul>
+<p>This progression is why techniques like early-exit and layer-skipping work at all for easy tokens, and why probing a middle layer is often the best place to read off a model's belief about a fact.</p>
+</div>
+<div class="figure" id="viz-layers"><p class="figure-title">Prediction sharpening with depth</p><p class="figure-sub">A simulated view of how the top-token distribution concentrates as you read out from deeper layers.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="only-the-last-row-matters-when-generating" class="scroll-mt-24 text-2xl">Only the last row matters (when generating)</h2>
+<div class="prose-block">
+<p>The model computes logits at every position, but when generating the next token you only need the last row. Why compute the rest?</p>
+<p><strong>During training</strong>, you need all of them. One pass over a 4096-token document yields 4096 separate predictions and 4096 loss terms — every position predicts its own successor. That parallelism over positions is precisely why transformers train efficiently and why the causal mask is essential.</p>
+<p><strong>During generation</strong>, all earlier positions produce logits you discard. Worse, without caching you would recompute the entire prefix for every single new token. The fix is the KV cache, which is Lesson 11 — and it splits inference into two phases with completely different performance characteristics.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">Tokenize, embed to [T, d], pass through N blocks keeping [T, d] throughout, apply a final norm, project to [T, vocab] logits, and softmax the last row into next-token probabilities.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="0">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A 12-token prompt enters a model with <code>d_model = 768</code>. What is the shape of the activations between block 5 and block 6?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">[12, 768]</button>
+<button type="button" data-opt="1">[768, 12]</button>
+<button type="button" data-opt="2">[12, 50257]</button>
+<button type="button" data-opt="3">[1, 768]</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Every block preserves [T, d]. It is [12, 768] between every pair of blocks — that invariance is what makes the stack composable.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="fill" data-answer="logits|logit" data-placeholder="one word">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">type the term</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What is the name for the raw, unnormalised scores the model produces for each vocabulary entry before softmax is applied?</p></div>
+<div class="note text-sm" data-ex-explain hidden>Logits. Sampling controls like temperature and top-k operate on logits, before the softmax converts them to probabilities.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="numeric" data-answer="524" data-tolerance="5" data-placeholder="millions">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>With <code>d_model = 4096</code> and a vocabulary of 128,000, how many parameters are in the unembedding projection, in millions? (Ignore bias.)</p></div>
+<div class="note text-sm" data-ex-explain hidden>4096 × 128,000 = 524,288,000, about 524 million. Half a billion parameters in the output layer alone, which is exactly why many models tie it to the input embedding table.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>During <em>training</em>, why does the model compute logits at every position rather than only the last one?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">To make the softmax numerically stable</button>
+<button type="button" data-opt="1">Because each position predicts its own next token, giving T training signals from one forward pass</button>
+<button type="button" data-opt="2">Because the causal mask requires it</button>
+<button type="button" data-opt="3">To fill the KV cache</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>A 4096-token document produces 4096 prediction tasks in a single pass. This dense supervision is a large part of why pretraining is data-efficient per forward pass.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="order">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">put in order</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Order the stages of a full forward pass.</p></div>
+<div class="space-y-2" data-ex-order>
+<div data-item="0"><span>Map tokens to ids and look up embeddings</span></div>
+<div data-item="1"><span>Run the stack of transformer blocks</span></div>
+<div data-item="2"><span>Apply the final normalisation</span></div>
+<div data-item="3"><span>Project to vocabulary size to get logits</span></div>
+<div data-item="4"><span>Softmax the final position into a probability distribution</span></div>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Embed → blocks → final norm → unembed → softmax. The shape is [T, d] from the embedding all the way to the final norm.</div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="08-the-transformer-block.html" data-nav-prev>← 8. The transformer block</a>
+      <a class="btn btn-primary" href="10-sampling-turning-probabilities-into-text.html" data-nav-next>10. Sampling: turning probabilities into text →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l09.js" defer></script>
+</body>
+</html>

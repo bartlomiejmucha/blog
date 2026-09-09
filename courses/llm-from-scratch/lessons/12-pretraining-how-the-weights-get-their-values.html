@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>12. Pretraining: how the weights get their values — LLMs from scratch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l12" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 12 / 18</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part IV · Training</span>
+      <h1 class="text-4xl leading-tight">12. Pretraining: how the weights get their values</h1>
+      <p class="lead">Billions of parameters start as random noise. Gradient descent on next-token prediction, repeated trillions of times, turns them into a language model.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Write down the cross-entropy loss and interpret its value</li>
+<li>Explain backpropagation and gradient descent at the right level of detail</li>
+<li>Describe what an optimizer, learning rate schedule and batch actually do</li>
+<li>Explain what pretraining data looks like and why filtering matters</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="measuring-wrongness" class="scroll-mt-24 text-2xl">Measuring wrongness</h2>
+<div class="prose-block">
+<p>Training needs a single number to minimise. For next-token prediction it is <strong>cross-entropy loss</strong>:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">loss = −log P(actual next token)</p>
+<p>That is the whole thing. If the model gave the correct token probability 0.9, the loss is 0.105. If it gave it 0.1, the loss is 2.3. If it gave it 0.001, the loss is 6.9. The penalty grows sharply as the assigned probability approaches zero, which is exactly the incentive you want: <strong>being confidently wrong is punished far more than being uncertain</strong>.</p>
+<p>Average this over every position in the batch and you have a number to descend.</p>
+<p><strong>Perplexity</strong> is <code>exp(loss)</code>, and it has a nice reading: "the model is as confused as if it were choosing uniformly among this many options". Loss 2.3 means perplexity 10 — effectively a 10-way guess at each token. Good models on English land around loss 1.8–2.2.</p>
+</div>
+<div class="figure" id="viz-loss"><p class="figure-title">Loss versus assigned probability</p><p class="figure-sub">Drag the probability the model assigned to the correct token and watch the loss curve.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="gradient-descent" class="scroll-mt-24 text-2xl">Gradient descent</h2>
+<div class="prose-block">
+<p>You have a loss and billions of knobs. Which way do you turn each one?</p>
+<p>The <strong>gradient</strong> answers this: for each weight, it is the partial derivative of the loss with respect to that weight — how much the loss would change if you nudged it up slightly. Step every weight a little in the opposite direction and the loss goes down.</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">w ← w − learning_rate × ∂loss/∂w</p>
+<p><strong>Backpropagation</strong> is how you get all those derivatives efficiently. Run the forward pass, keeping the intermediate activations. Then walk backwards through the computation graph, applying the chain rule layer by layer. The cost is roughly twice the forward pass, regardless of how many parameters there are — which is the fact that makes training large networks feasible at all.</p>
+<p>Nobody uses plain gradient descent. <strong>Adam / AdamW</strong> is the standard: it keeps a running average of each weight's gradient (momentum) and of its squared gradient (scale), giving every parameter its own effective step size. The cost is memory — two extra numbers per parameter, which is why training a 7B model needs far more than 7B × 2 bytes of GPU memory.</p>
+</div>
+<div class="figure" id="viz-descent"><p class="figure-title">Descending a loss surface</p><p class="figure-sub">Set the learning rate and watch the path. Too small crawls; too large diverges.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-mechanics-of-a-training-run" class="scroll-mt-24 text-2xl">The mechanics of a training run</h2>
+<div class="prose-block">
+<ul>
+  <li><strong>Batching.</strong> Gradients from a single sequence are noisy, so you average over many. Large models use batches of millions of tokens, assembled across thousands of GPUs.</li>
+  <li><strong>Learning rate schedule.</strong> Almost universally: linear <em>warmup</em> over the first few thousand steps (large steps on random weights destabilise training), then <em>cosine decay</em> toward near zero. The decay matters — models improve substantially in the final phase as the steps get small.</li>
+  <li><strong>Gradient clipping.</strong> Cap the gradient norm to survive occasional bad batches that would otherwise blow the weights apart.</li>
+  <li><strong>Mixed precision.</strong> Compute in bf16 for speed, keep a master copy of the weights in fp32 for numerical stability.</li>
+  <li><strong>Checkpointing.</strong> Runs last weeks to months across thousands of GPUs; hardware fails routinely, so state is saved constantly and runs resume from the last checkpoint.</li>
+</ul>
+<p>One pass over the data is called an epoch, but frontier pretraining typically does roughly one epoch over an enormous corpus rather than many epochs over a small one — repeated data yields diminishing returns and eventually memorisation.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-data" class="scroll-mt-24 text-2xl">The data</h2>
+<div class="prose-block">
+<p>Pretraining corpora are on the order of trillions of tokens: filtered web crawl (the bulk), books, code repositories, Wikipedia, academic papers, curated Q&amp;A.</p>
+<p>Filtering is not a footnote — it is one of the highest-leverage parts of the whole process. Standard steps include quality classification (does this read like a reference document?), deduplication (near-duplicates cause memorisation and waste compute), removing machine-generated spam, language identification, toxicity and PII filtering, and <strong>decontamination</strong>: removing text that overlaps evaluation benchmarks, without which your reported scores measure memorisation rather than ability.</p>
+<p>Data <em>mixture</em> matters too, and in non-obvious ways. Including a substantial fraction of code improves performance on reasoning tasks that have nothing to do with programming — a well-replicated result usually explained by code's strict, explicit logical structure.</p>
+<p>Cost, for scale: a frontier pretraining run is thousands of GPUs for months, tens of millions of dollars, and a single unrecoverable failure can waste weeks. This is why pretraining happens rarely and fine-tuning happens constantly.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">Loss is the negative log probability the model assigned to the token that actually came next. Backpropagation computes how each weight affected that loss; the optimizer nudges every weight downhill. Repeat over trillions of tokens with a warmup-then-decay learning rate.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="numeric" data-answer="0.69" data-tolerance="0.02" data-placeholder="a number">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>The model assigned probability 0.5 to the token that actually came next. What is the cross-entropy loss for that position? Two decimal places.</p></div>
+<div class="note text-sm" data-ex-explain hidden>−log(0.5) = 0.693. As a reference: probability 1.0 gives loss 0, and the loss grows without bound as the assigned probability approaches 0.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="numeric" data-answer="10" data-tolerance="0.6" data-placeholder="a number">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A model reports an average loss of 2.3. What is its perplexity, to the nearest whole number?</p></div>
+<div class="note text-sm" data-ex-explain hidden>exp(2.3) ≈ 9.97, so about 10 — as uncertain as picking uniformly among 10 tokens at each step.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What does backpropagation compute?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">The next-token probabilities</button>
+<button type="button" data-opt="1">The derivative of the loss with respect to every parameter, by applying the chain rule backwards through the network</button>
+<button type="button" data-opt="2">The optimal learning rate</button>
+<button type="button" data-opt="3">The attention weights</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>It is the efficient algorithm for getting all the gradients in roughly one backward pass — about twice the cost of the forward pass, no matter how many parameters exist.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why do training runs start with a learning rate warmup?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">To fill the KV cache</button>
+<button type="button" data-opt="1">Because large steps on freshly randomised weights cause instability and divergence</button>
+<button type="button" data-opt="2">Because the tokenizer needs time to adapt</button>
+<button type="button" data-opt="3">To reduce memory usage early on</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Early gradients on random weights are large and unreliable. Warming up from near zero lets the model settle before taking full-size steps.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="multi" data-answer="0,1,3">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which data-preparation steps genuinely matter for pretraining quality? Select all.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Deduplicating near-identical documents</button>
+<button type="button" data-opt="1">Removing text that overlaps evaluation benchmarks</button>
+<button type="button" data-opt="2">Sorting the corpus alphabetically</button>
+<button type="button" data-opt="3">Including a meaningful fraction of source code</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Ordering by anything semantic is if anything harmful — batches should be diverse. Dedup, decontamination, and the code fraction are all well-supported quality levers.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="6" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 6</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why does the AdamW optimizer increase memory requirements so much compared to plain SGD?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It stores the full training dataset in memory</button>
+<button type="button" data-opt="1">It keeps two additional running statistics per parameter</button>
+<button type="button" data-opt="2">It requires a larger batch size</button>
+<button type="button" data-opt="3">It duplicates the attention cache</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Momentum plus a second-moment estimate means roughly three times the parameter memory, before you count gradients, activations and an fp32 master copy.</div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="11-context-windows-and-the-kv-cache.html" data-nav-prev>← 11. Context windows and the KV cache</a>
+      <a class="btn btn-primary" href="13-scaling-laws-why-bigger-worked.html" data-nav-next>13. Scaling laws: why bigger worked →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l12.js" defer></script>
+</body>
+</html>

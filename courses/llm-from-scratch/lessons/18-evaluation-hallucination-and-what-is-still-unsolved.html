@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>18. Evaluation, hallucination and what is still unsolved — LLMs from scratch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l18" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 18 / 18</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part V · Using and extending models</span>
+      <h1 class="text-4xl leading-tight">18. Evaluation, hallucination and what is still unsolved</h1>
+      <p class="lead">How to tell whether a model is actually good, why it makes things up, and an honest account of the open problems.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Choose an appropriate evaluation method and know its weaknesses</li>
+<li>Explain the structural causes of hallucination</li>
+<li>Describe practical mitigations and their limits</li>
+<li>Give an accurate account of what remains unsolved</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="ways-to-measure-a-model" class="scroll-mt-24 text-2xl">Ways to measure a model</h2>
+<div class="prose-block">
+<ul>
+  <li><strong>Perplexity.</strong> Cheap and objective, but only comparable between models sharing a tokenizer, and it correlates loosely with anything a user cares about.</li>
+  <li><strong>Multiple-choice benchmarks</strong> (MMLU and similar). Fast and automatic, but heavily contaminated — the questions are on the internet, therefore in the training data — and scoring is sensitive to formatting and option order. Saturated benchmarks tell you almost nothing at the frontier.</li>
+  <li><strong>Execution-based evaluation</strong> (HumanEval, SWE-bench). Run the generated code against tests. Objective and hard to fake, which is why code is unusually well-measured.</li>
+  <li><strong>Human preference arenas.</strong> Blind pairwise comparison at scale. Captures what people actually like, which includes a real bias toward length, formatting and confidence.</li>
+  <li><strong>LLM-as-judge.</strong> A strong model scores outputs against a rubric. Cheap and scalable, with documented biases: position bias, verbosity bias, and self-preference for its own outputs. Usable with care — randomise positions, use a rubric, calibrate against human labels.</li>
+</ul>
+<div class="note note-key"><p class="text-sm"><strong>The rule that matters:</strong> build a small evaluation set from your own real inputs, with your own criteria, before you ship anything. Fifty representative cases you actually check will tell you more about production behaviour than any public leaderboard.</p></div>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="why-models-hallucinate" class="scroll-mt-24 text-2xl">Why models hallucinate</h2>
+<div class="prose-block">
+<p>Not a bug in the usual sense. Several structural causes stack up:</p>
+<ol>
+  <li><strong>The objective rewards plausibility.</strong> Training optimises the probability of a plausible continuation. A fluent, well-formed falsehood is a good continuation by that measure. Nothing in pretraining distinguishes "true" from "reads like the truth".</li>
+  <li><strong>There is no retrieval step.</strong> Facts are diffuse patterns in weights, not records. Nothing exists to return "not found".</li>
+  <li><strong>Uncertainty has nowhere to go.</strong> The model has calibrated uncertainty internally — its probability distribution genuinely reflects it — but the sampled output is a token, and one token cannot carry a confidence interval unless the model was trained to say so.</li>
+  <li><strong>Post-training can make it worse.</strong> Human raters prefer confident, complete answers over hedged ones. Preference training therefore rewards asserting over admitting ignorance.</li>
+  <li><strong>Compounding.</strong> Once a fabricated detail is in the context, later tokens are conditioned on it and stay consistent with it.</li>
+</ol>
+<p>Two useful nuances. First, models are often better calibrated than they appear — the information about uncertainty exists in the logits even when the text sounds certain. Second, prompting for uncertainty ("say if you are unsure") measurably helps, because it makes hedging a likely continuation rather than a disfavoured one.</p>
+</div>
+<div class="figure" id="viz-halluc"><p class="figure-title">Confidence versus correctness</p><p class="figure-sub">Sort model answers by the probability assigned to them and see how accuracy tracks confidence.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="mitigations-that-actually-work" class="scroll-mt-24 text-2xl">Mitigations that actually work</h2>
+<div class="prose-block">
+<ul>
+  <li><strong>Grounding.</strong> Supply the source text and instruct the model to answer only from it. The single most effective intervention available.</li>
+  <li><strong>Citations.</strong> Require a quote or span reference for each claim, then verify the quote appears in the source. Cheap, mechanical, and catches a lot.</li>
+  <li><strong>Escape hatches.</strong> Explicitly permit "I don't know" and "the document does not say".</li>
+  <li><strong>Verification passes.</strong> A second call that checks the first against the sources. Not free, and not independent, but it catches a meaningful share of errors.</li>
+  <li><strong>Self-consistency.</strong> Sample several answers; agreement across them is a usable confidence signal, and disagreement is a strong warning.</li>
+  <li><strong>Constrained output.</strong> Schemas and enumerated options remove whole categories of invention.</li>
+  <li><strong>Verifiable domains.</strong> Where you can check — run the code, execute the query — check. Do not ask the model to be right; ask it to produce something testable.</li>
+</ul>
+<p>None of these achieve elimination. Systems that must not state falsehoods need a human in the loop or a hard verification gate, not a better prompt.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="honestly-open-problems" class="scroll-mt-24 text-2xl">Honestly open problems</h2>
+<div class="prose-block">
+<p>Where the field actually stands, without hype in either direction:</p>
+<ul>
+  <li><strong>Reliability.</strong> Per-step accuracy is high; long chains still compound errors into failure. This is the main barrier to autonomous use.</li>
+  <li><strong>Interpretability.</strong> Sparse autoencoders and circuit analysis have made real progress, and we still cannot explain most of what a frontier model does on a given input.</li>
+  <li><strong>Continual learning.</strong> Models cannot absorb new knowledge without retraining; fine-tuning causes catastrophic forgetting. Context and retrieval are workarounds, not solutions.</li>
+  <li><strong>Genuine reasoning versus pattern matching.</strong> Performance often degrades on problems restructured to defeat memorised patterns. Where the line sits is contested and empirically unsettled.</li>
+  <li><strong>Evaluation itself.</strong> We are measurably bad at measuring these systems, and benchmarks decay as they leak into training data.</li>
+  <li><strong>Alignment.</strong> Preference training optimises for what raters approve of, which is not the same as what is true or good. Scalable oversight of systems that exceed human ability in a domain is unsolved.</li>
+  <li><strong>Data.</strong> High-quality human text is finite and the easy supply is largely consumed.</li>
+</ul>
+<div class="note note-key"><p class="text-sm"><strong>You have finished the course.</strong> You can now trace text from tokenizer to logits, explain every component of a transformer block, reason about serving cost, and evaluate claims about these systems on the mechanics rather than the marketing. The most useful next step is to build something — implement a small transformer from scratch, or instrument a real model and look at its attention patterns yourself.</p></div>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">Benchmarks are contaminated and saturated; LLM judges are cheap but biased; task-specific evaluation on your own data is what actually predicts production behaviour. Hallucination follows from the training objective — fluency is rewarded, uncertainty is not — and is mitigated, never eliminated, by grounding and calibration.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A model scores 89% on a public benchmark. Which concern most limits what that tells you?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Benchmarks are too difficult for current models</button>
+<button type="button" data-opt="1">The benchmark is public, so it is likely present in the training data</button>
+<button type="button" data-opt="2">Benchmarks only measure generation speed</button>
+<button type="button" data-opt="3">Multiple-choice questions cannot be scored automatically</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Contamination. Public test sets end up in web crawls, so a high score may reflect memorisation. This is why decontamination during data prep, and private evaluation sets, matter so much.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="multi" data-answer="0,1,3">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which are genuine structural causes of hallucination? Select all.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">The training objective rewards plausible continuations, not verified ones</button>
+<button type="button" data-opt="1">There is no lookup step that can return 'not found'</button>
+<button type="button" data-opt="2">The model's internal probabilities carry no information about its uncertainty</button>
+<button type="button" data-opt="3">Preference training rewards confident answers because raters prefer them</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>The probabilities do carry uncertainty information and are often reasonably calibrated. The problem is that a sampled token does not express it unless the model was trained to say so.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which mitigation reduces hallucination most reliably?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Lowering the temperature to 0</button>
+<button type="button" data-opt="1">Grounding the answer in supplied source text and requiring verifiable citations</button>
+<button type="button" data-opt="2">Asking the model to be accurate</button>
+<button type="button" data-opt="3">Using a larger model</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Temperature 0 makes fabrications deterministic, not absent. Larger models hallucinate less but still do. Grounding plus mechanical verification of quotes is what moves the number substantially.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="multi" data-answer="0,1,2">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which are known biases of LLM-as-judge evaluation? Select all.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Preferring the response shown first</button>
+<button type="button" data-opt="1">Preferring longer responses</button>
+<button type="button" data-opt="2">Preferring outputs from the same model family as the judge</button>
+<button type="button" data-opt="3">Preferring responses containing more numbers</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Position bias, verbosity bias and self-preference are all documented. Randomising order and calibrating against human labels are the standard countermeasures.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>You are building an LLM feature and can do one evaluation activity. Which gives the most useful signal?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Compare public leaderboard scores across models</button>
+<button type="button" data-opt="1">Assemble 50 representative examples from your real inputs with your own success criteria and check outputs against them</button>
+<button type="button" data-opt="2">Measure perplexity on a generic text corpus</button>
+<button type="button" data-opt="3">Ask the model to rate its own confidence</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>A small task-specific evaluation set predicts your production behaviour. Leaderboards measure a different distribution, and perplexity on generic text measures something further away still.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="6" data-ex-type="fill" data-answer="contamination|data contamination|benchmark contamination|test set contamination" data-placeholder="one word is enough">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 6</span><span class="text-xs uppercase tracking-wider text-ink-600">type the term</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What is the term for a public benchmark's test questions appearing in a model's training data, inflating its score?</p></div>
+<div class="note text-sm" data-ex-explain hidden>Contamination. Removing benchmark overlap from pretraining data — decontamination — is a standard and necessary step, and an imperfect one.</div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="17-making-models-cheap-quantization-lora-moe-speculative-decoding.html" data-nav-prev>← 17. Making models cheap: quantization, LoRA, MoE, speculative decoding</a>
+      <a class="btn btn-primary" href="../index.html" data-nav-next>Finish → Course home</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l18.js" defer></script>
+</body>
+</html>

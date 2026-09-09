@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>14. Post-training: SFT, RLHF and DPO — LLMs from scratch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l14" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 14 / 18</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part IV · Training</span>
+      <h1 class="text-4xl leading-tight">14. Post-training: SFT, RLHF and DPO</h1>
+      <p class="lead">A pretrained model completes text; it does not answer questions. Turning a document-completer into an assistant is a separate stage, and it is where most of the behaviour you interact with comes from.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Explain why a base model is not usable as an assistant</li>
+<li>Describe supervised fine-tuning and what data it needs</li>
+<li>Explain the RLHF pipeline including the reward model and PPO</li>
+<li>Explain how DPO removes the reward model, and what alignment tax means</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="what-a-base-model-does" class="scroll-mt-24 text-2xl">What a base model does</h2>
+<div class="prose-block">
+<p>Ask a raw pretrained model "What is the capital of France?" and a very plausible continuation is:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-300">What is the capital of France?<br>What is the largest city in Germany?<br>What is the currency of Japan?</p>
+<p>It is not being unhelpful. It is doing its job perfectly: on the internet, a question is frequently followed by more questions — a quiz, an FAQ, an exercise list. Answering is only one of many likely continuations.</p>
+<p>The base model contains the knowledge and the ability. What it lacks is the <strong>convention</strong> that a user turn should be followed by a helpful assistant turn. Post-training installs that convention, along with tone, refusal behaviour, formatting and much else.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="stage-1-supervised-fine-tuning" class="scroll-mt-24 text-2xl">Stage 1: supervised fine-tuning</h2>
+<div class="prose-block">
+<p>SFT is ordinary next-token training on a curated dataset of conversations. Examples look like:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-xs leading-6 text-ink-300">&lt;|user|&gt; Explain photosynthesis to a 10-year-old.<br>&lt;|assistant|&gt; Plants make their own food using sunlight…&lt;|end|&gt;</p>
+<p>Loss is usually computed only on the assistant tokens — you want the model to learn to produce responses, not to produce user turns. Special role tokens delimit the turns and are what let the model track who is speaking. (This is also why prompt-injection attacks are structurally interesting: everything is ultimately one token stream, and the role boundaries are a learned convention rather than a hard barrier.)</p>
+<p>Data volume is modest: tens of thousands of examples is often enough, and quality dominates quantity. The LIMA result — strong instruction-following from 1,000 carefully curated examples — is the canonical evidence that SFT is teaching a <em>format</em> the model already has the substance for, not teaching new knowledge.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="stage-2-learning-from-preferences" class="scroll-mt-24 text-2xl">Stage 2: learning from preferences</h2>
+<div class="prose-block">
+<p>SFT can only imitate demonstrations. But for many questions, writing an ideal answer is hard while <em>comparing</em> two answers is easy. RLHF exploits that asymmetry.</p>
+<ol>
+  <li><strong>Collect comparisons.</strong> Sample two responses to the same prompt; a human labels which is better. Repeat for tens or hundreds of thousands of prompts.</li>
+  <li><strong>Train a reward model.</strong> A separate network (often initialised from the LLM) learns to output a scalar score, trained so that preferred responses score higher. It is a learned, automatable stand-in for human judgement.</li>
+  <li><strong>Optimise the policy.</strong> Use reinforcement learning — PPO — to update the LLM to produce responses the reward model scores highly, with a KL-divergence penalty that punishes drifting too far from the SFT model.</li>
+</ol>
+<p>That KL penalty is essential. Without it the policy finds adversarial nonsense that the reward model happens to love — classic <strong>reward hacking</strong>. The reward model is an approximation of human preference, and any optimiser pushed hard enough will find where the approximation breaks.</p>
+</div>
+<div class="figure" id="viz-preference"><p class="figure-title">Label preference pairs</p><p class="figure-sub">Play the annotator: pick the better response, then see what signal your choices give a reward model.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="dpo-and-what-comes-after" class="scroll-mt-24 text-2xl">DPO and what comes after</h2>
+<div class="prose-block">
+<p>PPO-based RLHF is fiddly: four models in memory at once — the policy being trained, a value network, the reward model and the frozen reference — plus unstable training and many hyperparameters. <strong>Direct Preference Optimisation</strong> showed that the RLHF objective can be rewritten as a simple classification loss directly on preference pairs — no reward model, no RL loop.</p>
+<p>The intuition: increase the log-probability of the preferred response and decrease it for the rejected one, each measured relative to a frozen reference model. One model to train, standard supervised machinery, dramatically simpler. DPO and its variants (IPO, KTO, ORPO) are now the default for most open-model post-training, though carefully done PPO can still edge it out at the frontier.</p>
+<p>Other things that live in post-training:</p>
+<ul>
+  <li><strong>Constitutional AI / RLAIF</strong> — a model critiques and revises its own outputs against a written set of principles, replacing much of the human labelling.</li>
+  <li><strong>RLVR</strong> — reinforcement learning from <em>verifiable</em> rewards: for maths and code you can check the answer automatically, giving a clean, unhackable reward signal. This is the engine behind current reasoning models.</li>
+  <li><strong>Reasoning training</strong> — rewarding long chains of thought that reach verified-correct answers, which produces models that spend far more tokens thinking before answering.</li>
+</ul>
+<div class="note note-warn"><p class="text-sm"><strong>The alignment tax.</strong> Post-training can reduce raw capability and diversity: models become more cautious, more formulaic, and sometimes over-refuse. It also produces sycophancy, because human raters prefer agreement — an incentive built directly into the objective. There is a genuine trade-off here, not just an engineering bug.</p></div>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">SFT teaches the format by imitating good demonstrations. RLHF trains a reward model on human preference comparisons and optimises the policy against it. DPO derives a direct loss on preference pairs, skipping the reward model entirely. Post-training changes behaviour far more than knowledge.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why does a base pretrained model often respond to a question with more questions?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It does not know the answer</button>
+<button type="button" data-opt="1">It is completing text, and on the internet a question is frequently followed by more questions</button>
+<button type="button" data-opt="2">Its temperature is set too high</button>
+<button type="button" data-opt="3">The tokenizer does not recognise question marks</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>It has the knowledge; it lacks the convention. Continuation is the only thing it was ever trained to do, and lists of questions are a very common continuation of a question.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="order">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">put in order</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Order the stages of a classic RLHF pipeline.</p></div>
+<div class="space-y-2" data-ex-order>
+<div data-item="0"><span>Pretrain on a large text corpus</span></div>
+<div data-item="1"><span>Supervised fine-tuning on curated conversation demonstrations</span></div>
+<div data-item="2"><span>Collect human comparisons between pairs of model responses</span></div>
+<div data-item="3"><span>Train a reward model to score responses</span></div>
+<div data-item="4"><span>Optimise the policy against the reward model with a KL penalty</span></div>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Pretrain → SFT → collect preferences → reward model → RL optimisation. DPO collapses the last two into one supervised step.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What does the KL-divergence penalty in RLHF prevent?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">The model from generating too many tokens</button>
+<button type="button" data-opt="1">The policy from drifting far from the SFT model and reward-hacking its way to nonsense the reward model overrates</button>
+<button type="button" data-opt="2">The reward model from overfitting to the training data</button>
+<button type="button" data-opt="3">Gradient explosion during backpropagation</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>The reward model is only an approximation of human preference. Unconstrained optimisation finds its blind spots, so you anchor the policy near a known-reasonable starting point.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What is the main practical advantage of DPO over PPO-based RLHF?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It needs no preference data</button>
+<button type="button" data-opt="1">It eliminates the separate reward model and the RL loop, training directly on preference pairs with a supervised loss</button>
+<button type="button" data-opt="2">It produces models with more knowledge</button>
+<button type="button" data-opt="3">It works without a pretrained base model</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>DPO still needs the same preference data. What it removes is the machinery: one training loop, one model to optimise, standard supervised tooling.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="multi" data-answer="0,1,3">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which are real, documented side effects of post-training? Select all.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Sycophancy, because raters tend to prefer agreeable responses</button>
+<button type="button" data-opt="1">Reduced output diversity compared with the base model</button>
+<button type="button" data-opt="2">Complete removal of factual errors</button>
+<button type="button" data-opt="3">Over-refusal of harmless requests that superficially resemble unsafe ones</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Post-training reshapes behaviour, not knowledge. Hallucination is reduced somewhat by preference training but nowhere close to eliminated.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="6" data-ex-type="fill" data-answer="supervised fine-tuning|supervised finetuning|supervised fine tuning" data-placeholder="three words">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 6</span><span class="text-xs uppercase tracking-wider text-ink-600">type the term</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What does the acronym SFT stand for in post-training?</p></div>
+<div class="note text-sm" data-ex-explain hidden>Supervised fine-tuning — ordinary next-token training on curated demonstration conversations, with the loss applied to the assistant's tokens.</div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="13-scaling-laws-why-bigger-worked.html" data-nav-prev>← 13. Scaling laws: why bigger worked</a>
+      <a class="btn btn-primary" href="15-prompting-in-context-learning-and-chain-of-thought.html" data-nav-next>15. Prompting, in-context learning and chain of thought →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l14.js" defer></script>
+</body>
+</html>

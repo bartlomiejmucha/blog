@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>2. Tokens: how text becomes numbers — LLMs from scratch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l02" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 2 / 18</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part I · Foundations</span>
+      <h1 class="text-4xl leading-tight">2. Tokens: how text becomes numbers</h1>
+      <p class="lead">The model never sees letters or words. Before any thinking happens, prompt is chopped into pieces and each piece is replaced by an integer ids from a fixed vocabulary built by a compression algorithm — and that detail explains a surprising number of LLM quirks.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Say what a tokenizer does and why letters never reach the model</li>
+<li>Explain why models use subword tokens instead of characters or words</li>
+<li>Run the byte-pair encoding merge algorithm by hand</li>
+<li>Predict how a given string will be split, including the leading-space trap</li>
+<li>Connect tokenization to real failures: spelling, arithmetic, rare languages, cost</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="why-not-just-use-words-or-letters" class="scroll-mt-24 text-2xl">Why not just use words? Or letters?</h2>
+<div class="prose-block">
+<p>Lesson 1 ended with the assembly line, and its first station was the tokenizer. This lesson is that station. One sentence to start, because everything else follows from it: <strong>the model is a number machine — letters cannot enter it.</strong> Everything must be converted into numbers <em>before</em> any prediction happens, and the conversion has to be mechanical, because it runs on every text in every language, including texts nobody has ever seen.</p>
+<p>So: chop the text into pieces, and give each piece a number. The only real question is <em>how big a piece</em>. Three options were tried; the first two fail.</p>
+<p><strong>Option 1: one piece per whole word.</strong> Sounds natural — words are the units we think in. Two problems. English has millions of word forms, plus names, typos, URLs and code, so the lookup list would be enormous — and still fail constantly, because any word not on the list is simply unrepresentable. And related words would share nothing: <code>tokenization</code>, <code>tokenizations</code> and <code>Tokenizer</code> would be three unrelated numbers, even though you can see they are the same root three ways. The model would have to learn each one from scratch.</p>
+<p><strong>Option 2: one piece per letter.</strong> Now the list is tiny — 26 letters plus digits and punctuation, or just 256 "bytes" (the numbers 0–255 that computers store every character as) — and nothing can ever be unknown, because every character is on the list. But look what happens to a short sentence:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">Hello world → 10 pieces: H e l l o ␣ w o r l d</p>
+<p>Recall the loop from Lesson 1: one pass through the whole machine per piece, and the model can only "see" a fixed-length stretch of pieces at a time — its <strong>context window</strong>. Ten passes instead of two, for the same sentence: five times the compute, and five times the space taken in the window. Too expensive.</p>
+<p><strong>Option 3: subwords — the compromise everyone landed on.</strong> Common things get one piece; rare things get built from shared fragments. "the" is one piece. "unhappiness" might be <code>un</code> + <code>happi</code> + <code>ness</code>. Nothing is ever unrepresentable (worst case: bytes), and sequences stay short. Real systems average roughly 4 characters per piece in English, and the list runs 32,000–256,000 entries.</p>
+<p>One more thing to notice: the pieces are learned from text, not handed down by a linguist. What counts as "common" depends on which text you learned from — and that single fact is responsible for most of this lesson's quirks.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="byte-pair-encoding-step-by-step" class="scroll-mt-24 text-2xl">Byte-pair encoding, step by step</h2>
+<div class="prose-block">
+<p>So how does the piece-list get built in the first place? Nobody hand-curates it. It is grown by an algorithm from 1994 called <strong>byte-pair encoding</strong> (BPE), and you are fully able to run it yourself. The whole idea in one sentence: <em>start with everything in pieces, then repeatedly glue together whichever two neighbouring pieces appear together most often.</em></p>
+<p>Do it by hand on a tiny "corpus" — four words: <code>low low low lower</code>. Start by splitting every word into individual letters (imagine each word ends with a marker, <code>&lt;/w&gt;</code>, so "low" is really <code>l o w&lt;/w&gt;</code> — the marker stops glues from running across words):</p>
+<ol>
+<li><strong>Count every neighbouring pair.</strong> The pair <code>l-o</code> appears once in each "low" (×3) and once in "lower" — 4 times total. The pair <code>o-w</code> appears 3 times. The pair <code>e-r</code> appears once. And so on.</li>
+<li><strong>Glue the winner.</strong> <code>l-o</code> is the most frequent pair, so it becomes a new single piece. The words are now <code>[lo] w</w></code> (×3) and <code>[lo] w e r</w></code>.</li>
+<li><strong>Recount and repeat.</strong> The pair <code>[lo]-w</code> appears 4 times — it wins, and "low" now exists as one piece. Next round <code>[low]-e</code> wins, and "lower" ends up as <code>low</code> + <code>e</code> + <code>r</code> after a couple more rounds.</li>
+</ol>
+<p>That's all it is: count, glue the most common pair, repeat, until the list reaches its size budget (tens of thousands of entries). Run on real text, the same process is what turns frequent English sequences — <code>ing</code>, <code> the</code>, <code>tion</code>, <code> def</code> — into single pieces, while rare sequences stay in fragments. The final product is an <em>ordered list of glue rules</em>, and encoding any new text just means replaying those rules in the order they were learned.</p>
+<p>Now run it for real in the trainer below — it is exactly the procedure you just did by hand. Watch which pairs win, and remember the last section's warning: the merges reflect the corpus you feed it, not "English in general". A tokenizer trained on English code splits Japanese badly, and that is a real, measured disadvantage for those languages: more pieces per sentence means more cost and less content fitting in the context window.</p>
+</div>
+<div class="figure" id="viz-bpe"><p class="figure-title">Train a BPE tokenizer</p><p class="figure-sub">Edit the corpus, then run merges one at a time and watch the vocabulary grow.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="encoding-the-leading-space-matters" class="scroll-mt-24 text-2xl">Encoding: the leading space matters</h2>
+<div class="prose-block">
+<p>You now know how the piece-list was built. The other half of the story is how your text gets <em>encoded</em> against that list, and there is one detail there with real consequences. Two stages:</p>
+<ol>
+<li><strong>First, rough cuts.</strong> A fixed pattern chops the text into rough pieces — roughly word-sized, and it is this step that decides a space <em>starts</em> a new piece rather than ending the previous one. Glue rules never cross these cut lines.</li>
+<li><strong>Then, glues inside each piece</strong>, applied in the order they were learned (earliest first).</li>
+</ol>
+<p>The detail with consequences: <strong>the space usually travels with the word that follows it.</strong> So <code>" dog"</code> (space glued on) and <code>"dog"</code> are two <em>different</em> pieces with different numbers, in GPT-style tokenizers and most others. Nothing is wrong with that — it is just how the list was built — but remember Lesson 1: the model can only predict what comes next, and it predicts from what the pieces actually say.</p>
+<p>Here is the failure that follows, end to end. You write a raw completion prompt ending in a space: <code>"The answer is "</code>. The model's favourite continuation is <code>" Paris"</code> — but that piece carries its own leading space, and yours has already been spent. Emitting it would print two spaces ("is  Paris"). Pieces for that exist, but text with double spaces almost never appeared during training, so the model never learned to expect anything there — the odds over the whole next piece go flat, and what little weight remains sits on oddities. You get a coin-flip instead of a confident answer, purely because your prompt ended half-way through a piece.</p>
+<p>Two things limit the damage in practice. First, it mostly bites <em>raw completion</em> prompts, where your text is literally the beginning being continued; chat apps wrap your message in turn markers and generation starts after those, so the effect largely disappears. Second, it is not a GPT quirk — it follows from subword tokenization itself, so it holds for any model whose tokenizer glues the space to the following word (GPT, Llama, Mistral, Claude and the rest). The rule that survives everywhere: <strong>do not end a prompt half-way through what should be a single piece</strong> — a space at the end, or a cut in the middle of a word.</p>
+<p>Try the live tokenizer below — it uses a cut-down copy of GPT-4's real piece-list (6,057 of the ~100,000 entries, but every id shown is genuine), with the real numbers underneath each piece. Start with the "leading space" preset: <code>strawberry</code> at the start of a line splits into three pieces (<code>str</code> + <code>aw</code> + <code>berry</code>), while <code>␣strawberry</code> with its leading space is a single piece. Same letters, three pieces versus one: three times the passes through the model, three times the space it takes in the context window, and three different numbers reaching the next stage instead of one. Then try the other presets — numbers, code indentation, a Japanese sentence — and watch the "characters per token" count at the bottom change. That number is the closest thing to a "how good is this tokenizer for this language" score, and it is why the Japanese and Russian you paste in costs more than the English.</p>
+</div>
+<div class="figure" id="viz-tokenize"><p class="figure-title">Live tokenizer</p><p class="figure-sub">Real byte-pair encoding against a cut-down cl100k_base table — the vocabulary GPT-4 uses. Colours mark token boundaries; the real token ids are shown underneath.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="quirks-that-are-actually-tokenization" class="scroll-mt-24 text-2xl">Quirks that are actually tokenization</h2>
+<div class="prose-block">
+<p>Time to collect the payoff. There is a large family of "this model is an idiot" moments that are really one fact in disguise: <strong>the model cannot see letters</strong> — only piece-numbers. The famous example: ask a chatbot how many r's are in "strawberry" and smart models confidently say 2. You can watch why in the tokenizer above: the model receives roughly <code>str</code> + <code>aw</code> + <code>berry</code> — three opaque numbers. The three r's are physically inside those chunks, but nothing in the input says "letters live here". The model has to know spellings <em>indirectly</em>, from text that talked about spellings, the way you know a word's spelling partly by feel rather than by looking.</p>
+<p>The same single fact explains a whole cluster of failures and quirks:</p>
+<ul>
+<li><strong>Reversing words, rhyming, letter games.</strong> All of it operates on letters the model never actually receives. It is good at them only to the extent it memorised the answers.</li>
+<li><strong>Fragile arithmetic.</strong> Whether <code>1234</code> arrives as one piece, or <code>12</code>+<code>34</code>, or digit-by-digit, changes how digits line up between the two numbers being multiplied — and alignment is what column arithmetic depends on. Some model families deliberately split every digit for exactly this reason (Exercise 5 quizzes you on the fix).</li>
+<li><strong>Per-language cost.</strong> Billing is per piece. A language that averages 3 characters per piece costs roughly twice what English costs per sentence, and fills the model's view twice as fast. Not sentiment — arithmetic.</li>
+<li><strong>Glitch tokens.</strong> Some pieces made it onto the list but almost never appeared in training text, so their embeddings stayed near-random. Feeding one in can derail a model completely. The famous one is <code>SolidGoldMagikarp</code>, which for a while made GPT-3 spit out garbled nonsense when it appeared in a prompt.</li>
+</ul>
+<div class="note"><p class="text-sm"><strong>Practical takeaway:</strong> when a model fails at a character-level task, first ask whether the characters were ever visible to it. Often the fix is to add spaces between the characters in your prompt, which forces a finer split — giving the model one piece per letter so it can finally "see" what it is being asked about.</p></div>
+<div class="note note-warn"><p class="text-sm"><strong>Does this mean you should prompt in English?</strong> Slightly, for two separate reasons that are easy to conflate. The tokenizer penalty is real but modest: Polish runs about 2–3 characters per token in English-built vocabularies versus ~4 for English, so you pay roughly 1.5–2× the cost and context space — a length penalty, not an intelligence penalty. The bigger effect for answer quality is usually training-data coverage (Lesson 12), not the tokenizer. For everyday use in a modern model the gap is often not worth switching over; it compounds on long documents and tricky reasoning, where the token multiplier and the coverage gap add up.</p></div>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">A tokenizer is a fixed vocabulary of byte sequences, learned before training by repeatedly merging the most frequent adjacent pair. Text is encoded by applying those merges in the order they were learned, and each resulting chunk becomes an integer. The model's entire universe is those integers.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why do modern LLMs use subword tokens rather than one token per word?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Subwords make the model's arithmetic more accurate</button>
+<button type="button" data-opt="1">A word vocabulary would be huge and would still hit unseen words; subwords keep the vocabulary bounded with no unknowns</button>
+<button type="button" data-opt="2">Subwords are required by the attention mechanism</button>
+<button type="button" data-opt="3">Because word tokens make sequences too long</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Bounded vocabulary, zero unknowns, and shared structure between related word forms. Word tokens make sequences <em>shorter</em>, not longer — that is not the problem; the open vocabulary is.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="numeric" data-answer="4" data-tolerance="0" data-placeholder="a whole number">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>You run BPE on the corpus <code>low low low lower</code>, treating spaces as separators and looking only inside words. Counting adjacent character pairs across all four words, how many times does the pair <code>lo</code> occur?</p></div>
+<div class="note text-sm" data-ex-explain hidden><code>low</code> appears three times and <code>lower</code> once — each contains <code>lo</code> exactly once, so the pair count is 4. It would be the first merge.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="multi" data-answer="0,1,3">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which of these behaviours are direct consequences of tokenization? Select all.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Difficulty counting the letters in a word</button>
+<button type="button" data-opt="1">Higher API cost per sentence for some languages than for English</button>
+<button type="button" data-opt="2">Forgetting what you said in a previous, separate API call</button>
+<button type="button" data-opt="3">Sensitivity to whether a completion prompt ends with a trailing space</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Letter counting, per-language cost and the trailing-space effect are all tokenizer artefacts. The trailing-space one shows up on completion-style prompts, where your text is the prefix being continued; chat templates hide most of it, but the cause is still the tokenizer. Forgetting between calls is statelessness (Lesson 1) — a different thing entirely.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="fill" data-answer="bpe|byte pair encoding|byte-pair encoding|bytepair encoding" data-placeholder="name or abbreviation">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">type the term</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Name the algorithm that builds a subword vocabulary by repeatedly merging the most frequent adjacent pair of symbols. (Its three-letter abbreviation is fine.)</p></div>
+<div class="note text-sm" data-ex-explain hidden>Byte-pair encoding. Starting from raw bytes guarantees any input is representable, so there is never an unknown token.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A model is bad at multiplying four-digit numbers. Which tokenizer change is most likely to help?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Making the vocabulary larger so more full numbers get their own token</button>
+<button type="button" data-opt="1">Forcing every digit to be its own token so digit positions align across numbers</button>
+<button type="button" data-opt="2">Removing the leading space from number tokens</button>
+<button type="button" data-opt="3">Training the tokenizer on more languages</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Per-digit tokens give the model a consistent positional structure to learn against. Bundling numbers into arbitrary chunks like <code>12</code>|<code>34</code> versus <code>1</code>|<code>234</code> destroys the alignment that column arithmetic needs.</div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="01-what-a-language-model-actually-does.html" data-nav-prev>← 1. What a language model actually does</a>
+      <a class="btn btn-primary" href="03-embeddings-meaning-as-direction.html" data-nav-next>3. Embeddings: meaning as direction →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l02-vocab.js" defer></script><script src="../assets/js/viz/l02.js" defer></script>
+</body>
+</html>

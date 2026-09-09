@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>10. Sampling: turning probabilities into text — LLMs from scratch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l10" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 10 / 18</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part III · Generation</span>
+      <h1 class="text-4xl leading-tight">10. Sampling: turning probabilities into text</h1>
+      <p class="lead">The model gives you a distribution. Choosing a token from it is a separate, tunable decision — and it changes output quality more than most people expect.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Explain greedy, temperature, top-k and top-p sampling precisely</li>
+<li>Predict how a distribution reshapes as temperature changes</li>
+<li>Choose sensible settings for factual versus creative tasks</li>
+<li>Explain repetition penalties, beam search and their failure modes</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="greedy-is-not-obviously-right" class="scroll-mt-24 text-2xl">Greedy is not obviously right</h2>
+<div class="prose-block">
+<p>The simplest rule is to always take the highest-probability token. It is deterministic and reproducible. It is also, for open-ended text, noticeably bad: greedy output falls into loops and repetitive, flat phrasing.</p>
+<p>The reason is worth understanding. Human text is not the most probable text. At every position, natural writing takes a moderately likely option rather than the single most likely one; always choosing the mode produces something statistically unlike real language. Greedy decoding also has no way out of a repetition loop — if "the same the same" becomes locally most likely, it stays there forever.</p>
+<p>For short factual answers or code, greedy (or temperature 0) is often exactly right. For anything longer or open-ended, you want randomness.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="temperature" class="scroll-mt-24 text-2xl">Temperature</h2>
+<div class="prose-block">
+<p>Temperature divides the logits before the softmax:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">P(i) = softmax(logit_i / T)</p>
+<ul>
+  <li><strong>T &lt; 1</strong> — logits spread apart, gaps amplify, the distribution sharpens toward the top token. More focused, more repetitive.</li>
+  <li><strong>T = 1</strong> — the model's own distribution, untouched.</li>
+  <li><strong>T &gt; 1</strong> — logits compress toward each other, the distribution flattens. More varied, and past roughly 1.3 usually incoherent.</li>
+  <li><strong>T → 0</strong> — becomes greedy decoding. Implementations special-case it rather than dividing by zero.</li>
+</ul>
+<p>The important intuition: temperature does <strong>not</strong> add new information or make the model smarter or dumber. It reweights the same ranking. A token the model considers hopeless is still nearly hopeless at T = 1.5 — just slightly less so, which is exactly where incoherence comes from.</p>
+</div>
+<div class="figure" id="viz-temperature"><p class="figure-title">Temperature, live</p><p class="figure-sub">Drag temperature and watch the same logits become a different distribution. Try 0.2 and 1.8.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="truncation-top-k-and-top-p" class="scroll-mt-24 text-2xl">Truncation: top-k and top-p</h2>
+<div class="prose-block">
+<p>Even at moderate temperature, the tail of the distribution contains thousands of tokens that are individually near-zero but collectively hold real probability mass. Sample long enough and you will eventually draw one, derailing the text. Truncation removes the tail before sampling.</p>
+<p><strong>Top-k</strong> — keep the k highest-probability tokens, renormalise, sample. Simple, but k is fixed regardless of context: when the model is confident, k = 50 admits 49 bad options; when it is genuinely uncertain across 200 reasonable tokens, k = 50 cuts off good ones.</p>
+<p><strong>Top-p (nucleus)</strong> — sort by probability and keep the smallest set whose cumulative probability reaches p (typically 0.9–0.95). The set size adapts automatically: a couple of tokens when the model is sure, hundreds when it is not. This is the modern default.</p>
+<p><strong>Min-p</strong> — a newer variant: keep tokens whose probability is at least <code>p × (probability of the top token)</code>. Robust at high temperatures, and increasingly available.</p>
+<p>The usual ordering in an implementation is: apply penalties to logits → divide by temperature → truncate (top-k, then top-p) → renormalise → sample.</p>
+</div>
+<div class="figure" id="viz-truncation"><p class="figure-title">Top-k and top-p side by side</p><p class="figure-sub">Set k and p and see which tokens survive under each rule. Move the temperature slider to change how confident the model is, and watch only the top-p set resize.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="penalties-beam-search-and-choosing-settings" class="scroll-mt-24 text-2xl">Penalties, beam search, and choosing settings</h2>
+<div class="prose-block">
+<p><strong>Repetition and frequency penalties</strong> subtract from the logits of tokens that already appeared. They reduce loops, but they are blunt instruments — they also penalise words that legitimately recur, such as a variable name in code or a subject's name in an essay. Keep them low or off for code.</p>
+<p><strong>Beam search</strong> keeps several candidate continuations alive and expands the best-scoring ones, aiming for a high-probability whole sequence rather than a high-probability next token. It is standard in translation, where there is one right answer, and poor for open-ended text, where it produces bland, generic output — again because likely text is not human text.</p>
+<p>Sensible starting points:</p>
+<div class="overflow-x-auto"><table>
+<tr><th>Task</th><th>Temperature</th><th>Notes</th></tr>
+<tr><td>Factual Q&amp;A, extraction, classification</td><td>0</td><td>Deterministic and reproducible</td></tr>
+<tr><td>Code generation</td><td>0 – 0.3</td><td>No repetition penalty</td></tr>
+<tr><td>General assistant prose</td><td>0.7</td><td>top-p 0.9–0.95</td></tr>
+<tr><td>Brainstorming, fiction</td><td>0.9 – 1.1</td><td>top-p 0.95, expect to discard some outputs</td></tr>
+</table></div>
+<div class="note note-warn"><p class="text-sm"><strong>Temperature 0 is not fully deterministic in practice.</strong> Floating-point non-associativity, batching and GPU kernel scheduling can change results run to run on a real serving stack. Do not build a system that depends on bit-identical outputs.</p></div>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">Temperature divides logits before the softmax: below 1 sharpens, above 1 flattens. Top-k keeps the k best tokens, top-p keeps the smallest set whose probability sums to p. Truncation removes the long tail of bad tokens; temperature controls the shape of what remains.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What does raising the temperature from 0.7 to 1.4 do to the distribution?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Adds new candidate tokens the model had not considered</button>
+<button type="button" data-opt="1">Flattens it, so lower-ranked tokens get relatively more probability</button>
+<button type="button" data-opt="2">Sharpens it toward the top token</button>
+<button type="button" data-opt="3">Truncates the tail below a threshold</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Dividing logits by a larger number compresses the gaps between them, flattening the softmax. The ranking is unchanged; only the shape moves. Truncation is a separate mechanism.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="2">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>The model gives probabilities <code>[0.6, 0.25, 0.1, 0.03, 0.02]</code>. Under top-p with p = 0.9, how many tokens remain in the candidate set?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">1</button>
+<button type="button" data-opt="1">2</button>
+<button type="button" data-opt="2">3</button>
+<button type="button" data-opt="3">5</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Cumulative: 0.6, then 0.85, then 0.95. Two tokens are not enough to reach 0.9, so the third is included and the set is 3 tokens. The last two are discarded.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="multi" data-answer="0,1,3">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which are genuine drawbacks of pure greedy decoding? Select all.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It can get stuck in repetition loops with no escape</button>
+<button type="button" data-opt="1">It produces text that is statistically unlike human writing for long outputs</button>
+<button type="button" data-opt="2">It makes the model's factual knowledge worse</button>
+<button type="button" data-opt="3">It gives no diversity across runs of the same prompt</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Greedy does not change what the model knows — the same distribution is being computed either way. It only changes which token is picked from it.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why is top-p usually preferred over top-k?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It is faster to compute</button>
+<button type="button" data-opt="1">The size of the candidate set adapts to how confident the model is at that step</button>
+<button type="button" data-opt="2">It guarantees deterministic output</button>
+<button type="button" data-opt="3">It works better with repetition penalties</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>A fixed k is wrong in both directions depending on context. Nucleus sampling keeps a small set when the model is confident and a large one when it genuinely is not.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="numeric" data-answer="0.88" data-tolerance="0.02" data-placeholder="between 0 and 1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Two tokens have logits 2.0 and 1.0. At temperature 0.5, what is the probability of the higher one? Give two decimal places.</p></div>
+<div class="note text-sm" data-ex-explain hidden>Divide by T: logits become 4.0 and 2.0. exp(4)=54.6, exp(2)=7.39, so P = 54.6/62.0 ≈ 0.88. At T=1 the same pair gives 0.73 — halving the temperature widened the gap considerably.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="6" data-ex-type="order">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 6</span><span class="text-xs uppercase tracking-wider text-ink-600">put in order</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Order the operations a typical sampling implementation applies to raw logits.</p></div>
+<div class="space-y-2" data-ex-order>
+<div data-item="0"><span>Apply repetition and frequency penalties to the logits</span></div>
+<div data-item="1"><span>Divide the logits by the temperature</span></div>
+<div data-item="2"><span>Truncate with top-k and top-p</span></div>
+<div data-item="3"><span>Renormalise the surviving probabilities and draw a token</span></div>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Penalties and temperature act on logits; truncation acts on the resulting ranking; then you renormalise and sample. Applying temperature after truncation would give quite different results.</div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="09-the-full-forward-pass.html" data-nav-prev>← 9. The full forward pass</a>
+      <a class="btn btn-primary" href="11-context-windows-and-the-kv-cache.html" data-nav-next>11. Context windows and the KV cache →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l10.js" defer></script>
+</body>
+</html>

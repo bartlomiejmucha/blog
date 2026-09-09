@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="utf-8">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Courses by Bartlomiej Mucha</title>
+<meta name="description" content="Slow, visual, hands-on courses on how modern software actually works. Starting with large language models.">
+<meta property="og:title" content="Courses by Bartlomiej Mucha">
+<meta property="og:description" content="Slow, visual, hands-on courses. Starting with large language models.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://edu.bartlomiejmucha.com">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="custom.css">
+</head>
+<body class="bg-paper text-ink font-sans antialiased">
+
+<!-- Nav -->
+<header class="sticky top-0 z-50 border-b border-ink/10 bg-paper/85 backdrop-blur">
+  <div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+    <a href="#top" class="text-sm font-semibold tracking-tight">bartlomiejmucha<span class="text-ink/40">.com</span></a>
+    <nav class="hidden gap-6 text-sm text-ink/60 sm:flex">
+      <a class="transition hover:text-ink" href="#llm-from-scratch">LLMs from scratch</a>
+    </nav>
+    <div class="flex items-center gap-3 sm:gap-4">
+      <!-- Blog is the primary destination in the bar, so it gets the solid pill -
+           mirrors the same bar on apps.bartlomiejmucha.com -->
+      <a class="group inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-ink px-3 py-1.5 text-xs font-medium text-paper transition hover:bg-ink/85 sm:gap-1.5 sm:px-4 sm:text-sm" href="https://bartlomiejmucha.com">
+        Blog
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="h-3 w-3 text-paper/60 transition group-hover:text-paper" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>
+      </a>
+      <a href="https://www.linkedin.com/in/bartlomiejmucha/" target="_blank" rel="noopener" class="whitespace-nowrap rounded-full border border-ink px-3 py-1.5 text-xs font-medium transition hover:bg-ink hover:text-paper sm:px-4 sm:text-sm">Contact</a>
+    </div>
+  </div>
+</header>
+
+<!-- Hero -->
+<section id="top" class="mx-auto max-w-6xl px-6 pt-20 pb-16 sm:pt-32 sm:pb-24">
+  <p class="mb-6 text-xs uppercase tracking-[0.25em] text-ink/45">Free courses · 2026</p>
+  <h1 class="max-w-3xl text-5xl leading-[1.05] tracking-tight sm:text-7xl">
+    Learn how it works <span class="font-serif italic">from first principles</span>, not from analogies.
+  </h1>
+  <p class="mt-8 max-w-xl text-lg leading-relaxed text-ink/65">
+    Slow, visual, hands-on courses. Every lesson has diagrams you can poke at and exercises
+    that check your answer. Free, no account, everything runs in your browser.
+  </p>
+  <div class="mt-10 flex flex-wrap gap-3 text-sm">
+    <a href="#llm-from-scratch" class="rounded-full bg-ink px-5 py-2.5 font-medium text-paper hover:bg-ink/85 transition">Browse the courses</a>
+    <a href="https://www.linkedin.com/in/bartlomiejmucha/" target="_blank" rel="noopener" class="rounded-full border border-ink/20 px-5 py-2.5 font-medium hover:border-ink transition">Get in touch</a>
+  </div>
+</section>
+
+<div class="mx-auto max-w-6xl px-6"><div class="rule h-px"></div></div>
+
+<!-- Courses -->
+<main class="mx-auto max-w-6xl divide-y divide-ink/10 px-6">
+
+  <!-- LLMs from scratch -->
+  <article id="llm-from-scratch" class="grid scroll-mt-24 items-center gap-10 py-20 sm:py-28 lg:grid-cols-12 lg:gap-16">
+    <div class="lg:col-span-5">
+      <p class="mb-5 inline-flex items-center gap-2 rounded-full border border-ink/15 bg-ink/[0.04] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-ink/60">
+        <span class="relative flex h-1.5 w-1.5"><span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-ink/50"></span><span class="relative inline-flex h-1.5 w-1.5 rounded-full bg-ink/70"></span></span>
+        18 lessons — available now
+      </p>
+      <div class="flex items-baseline gap-4">
+        <span class="font-serif text-4xl text-ink/25">01</span>
+        <h2 class="text-3xl font-semibold tracking-tight sm:text-4xl">LLMs from scratch</h2>
+      </div>
+      <p class="mt-6 text-lg leading-relaxed text-ink/70">
+        How large language models actually work, built up one piece at a time. It starts with
+        &ldquo;what is a token&rdquo; and ends with mixture-of-experts routing, speculative decoding
+        and RLHF — no maths background assumed.
+      </p>
+      <ul class="mt-6 space-y-2 text-ink/60">
+        <li class="flex gap-3"><span class="text-ink/30">—</span>Tokens, embeddings, attention and the transformer block</li>
+        <li class="flex gap-3"><span class="text-ink/30">—</span>Pretraining, scaling laws, SFT, RLHF and DPO</li>
+        <li class="flex gap-3"><span class="text-ink/30">—</span>Interactive diagrams in every lesson, plus checked exercises</li>
+        <li class="flex gap-3"><span class="text-ink/30">—</span>Progress saved locally — no account, no tracking</li>
+      </ul>
+      <div class="mt-8 flex flex-wrap gap-3 text-sm">
+        <a href="courses/llm-from-scratch/index.html" class="rounded-full bg-ink px-5 py-2.5 font-medium text-paper hover:bg-ink/85 transition">Start the course</a>
+        <a href="courses/llm-from-scratch/lessons/01-what-a-language-model-actually-does.html" class="rounded-full border border-ink/20 px-5 py-2.5 font-medium hover:border-ink transition">Read lesson 1</a>
+      </div>
+    </div>
+    <div class="lg:col-span-7">
+      <!-- No screenshot yet: an ordered list of the syllabus carries more signal
+           than a picture of a web page would. -->
+      <div class="rounded-2xl border border-ink/10 bg-ink/[0.02] p-8 shadow-[0_30px_60px_-30px_rgba(10,10,10,.35)] sm:p-10">
+        <p class="mb-6 text-xs uppercase tracking-[0.2em] text-ink/45">The map</p>
+        <ol class="grid gap-x-10 gap-y-2.5 text-sm text-ink/70 sm:grid-cols-2">
+          <li class="flex gap-3"><span class="w-5 shrink-0 text-right font-serif text-ink/30">1</span>What a language model actually does</li>
+          <li class="flex gap-3"><span class="w-5 shrink-0 text-right font-serif text-ink/30">2</span>Tokens: how text becomes numbers</li>
+          <li class="flex gap-3"><span class="w-5 shrink-0 text-right font-serif text-ink/30">3</span>Embeddings: meaning as direction</li>
+          <li class="flex gap-3"><span class="w-5 shrink-0 text-right font-serif text-ink/30">4</span>Neurons, matrices and nonlinearity</li>
+          <li class="flex gap-3"><span class="w-5 shrink-0 text-right font-serif text-ink/30">5</span>Attention: queries, keys and values</li>
+          <li class="flex gap-3"><span class="w-5 shrink-0 text-right font-serif text-ink/30">6</span>Multi-head attention</li>
+          <li class="flex gap-3"><span class="w-5 shrink-0 text-right font-serif text-ink/30">7</span>Position: how the model knows word order</li>
+          <li class="flex gap-3"><span class="w-5 shrink-0 text-right font-serif text-ink/30">8</span>The transformer block</li>
+          <li class="flex gap-3"><span class="w-5 shrink-0 text-right font-serif text-ink/30">9</span>The full forward pass</li>
+          <li class="flex gap-3"><span class="w-5 shrink-0 text-right font-serif text-ink/30">10</span>Sampling: probabilities into text</li>
+          <li class="flex gap-3"><span class="w-5 shrink-0 text-right font-serif text-ink/30">11</span>Context windows and the KV cache</li>
+          <li class="flex gap-3"><span class="w-5 shrink-0 text-right font-serif text-ink/30">12</span>Pretraining: where weights come from</li>
+          <li class="flex gap-3"><span class="w-5 shrink-0 text-right font-serif text-ink/30">13</span>Scaling laws: why bigger worked</li>
+          <li class="flex gap-3"><span class="w-5 shrink-0 text-right font-serif text-ink/30">14</span>Post-training: SFT, RLHF and DPO</li>
+          <li class="flex gap-3"><span class="w-5 shrink-0 text-right font-serif text-ink/30">15</span>Prompting and chain-of-thought</li>
+          <li class="flex gap-3"><span class="w-5 shrink-0 text-right font-serif text-ink/30">16</span>RAG, tools and agents</li>
+          <li class="flex gap-3"><span class="w-5 shrink-0 text-right font-serif text-ink/30">17</span>Making models cheap</li>
+          <li class="flex gap-3"><span class="w-5 shrink-0 text-right font-serif text-ink/30">18</span>Evaluation, hallucination, open problems</li>
+        </ol>
+      </div>
+    </div>
+  </article>
+
+</main>
+
+<!-- Footer CTA -->
+<footer class="border-t border-ink/10 bg-ink text-paper">
+  <div class="mx-auto max-w-6xl px-6 py-20">
+    <h2 class="max-w-2xl text-4xl leading-tight tracking-tight sm:text-5xl">
+      More courses coming. <span class="font-serif italic">Something you want covered</span>?
+    </h2>
+    <a href="https://www.linkedin.com/in/bartlomiejmucha/" target="_blank" rel="noopener" class="mt-8 inline-flex items-center gap-2.5 rounded-full bg-paper px-6 py-3 font-medium text-ink hover:bg-white transition"><svg viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5" aria-hidden="true"><path d="M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.13 1.45-2.13 2.94v5.67H9.35V9h3.41v1.56h.05a3.74 3.74 0 0 1 3.37-1.85c3.6 0 4.27 2.37 4.27 5.46v6.28ZM5.34 7.43a2.07 2.07 0 1 1 0-4.14 2.07 2.07 0 0 1 0 4.14Zm1.78 13.02H3.55V9h3.57v11.45ZM22.22 0H1.77C.79 0 0 .77 0 1.73v20.54C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.73V1.73C24 .77 23.2 0 22.22 0Z"/></svg>Connect on LinkedIn</a>
+    <div class="mt-16 flex flex-col justify-between gap-4 border-t border-paper/15 pt-6 text-sm text-paper/50 sm:flex-row">
+      <p>© 2026 Bartlomiej Mucha</p>
+      <p>edu.bartlomiejmucha.com</p>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

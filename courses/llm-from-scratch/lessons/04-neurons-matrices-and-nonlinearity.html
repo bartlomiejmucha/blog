@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>4. Neurons, matrices and nonlinearity — LLMs from scratch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l04" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 4 / 18</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part I · Foundations</span>
+      <h1 class="text-4xl leading-tight">4. Neurons, matrices and nonlinearity</h1>
+      <p class="lead">The last two lessons turned text into numbers and showed how numbers compare. But nothing in them yet <em>changes</em> a number — and the model is nothing but chained changes. This lesson builds the smallest possible change-maker, a single neuron, from scratch, then stacks it into the layers that fill a transformer block.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Compute a single neuron's output by hand, the same way the machine does</li>
+<li>Read matrix shapes and know which multiplications are even legal</li>
+<li>Explain why a stack of layers needs activation functions — and what collapses without them</li>
+<li>Recognise the expand-then-contract shape inside a real transformer block</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="one-neuron" class="scroll-mt-24 text-2xl">One neuron</h2>
+<div class="prose-block">
+<p>Last lesson ended with the embedding table "handing off" to the transformer blocks. But notice what that handoff actually requires: something that can <em>change</em> the arrows. A lookup table can't — it just reads out a fixed row. The whole model, from the second station onward, is chains of things-that-change-numbers. This lesson builds the smallest one, from scratch.</p>
+<p>Here is the whole design of a "neuron" (in quotes because it has nothing to do with biology beyond being small and numerous). It does exactly four arithmetic steps:</p>
+<ol>
+<li><strong>Multiply each input by a private number of its own.</strong> Those numbers are called <strong>weights</strong> — one per input, learned during training. A weight is a volume knob: 2.0 means "amplify what this input says", −1.0 means "treat it as evidence against me", 0 means "ignore it".</li>
+<li><strong>Add the products up.</strong> One number so far: a single verdict compiled from all the inputs.</li>
+<li><strong>Add one more learned number, the <em>bias</em>.</strong> Think of it as a threshold of doubt: it shifts the verdict up or down before anyone looks at it, deciding how easily this neuron gets excited at all.</li>
+<li><strong>Squash the result through a small fixed function</strong> — the <strong>activation</strong>. The standard one, ReLU, just does <code>max(0, result)</code>: pass positive numbers through unchanged, clamp negatives to zero. "Silent unless you have something positive to say."</li>
+</ol>
+<p>Do it by hand, with the exact numbers the widget below starts on. Inputs <code>[2, 1, 0.5]</code>, weights <code>[0.5, −1.0, 2.0]</code>, bias <code>1.0</code>, ReLU:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">step 1+2: (0.5×2) + (−1×1) + (2×0.5) = 1 − 1 + 1 = 1<br>step 3:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 1 + bias 1 = 2<br>step 4:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ReLU(2) = 2&nbsp;&nbsp;(positive, passes unchanged)<br>output: 2</p>
+<p>That's a neuron. Written as one formula — which is how you'll see it everywhere — the same thing is <code>y = f(w₁x₁ + w₂x₂ + … + b)</code>, and now you can read it: <em>products, then sum, then bias, then squash.</em></p>
+<p>And here is the connection to last lesson, which makes this more than arithmetic trivia. Step 1+2 — multiply matching pairs and add — is <strong>the dot product you just learned</strong>. Remember what a dot product measures: how much two arrows point the same way. So a neuron is really asking: <em>"how much does this input point in my direction?"</em> — where "my direction" is its weight vector, one of thousands of little questions the model learned to ask. The squash (step 4) then decides how loudly to answer: silence, or a number proportional to the match.</p>
+<p>In the widget below, drag the input sliders and watch the four steps recompute line by line — then switch the activation to "none" and drag an input until the sum goes negative. That difference is the entire subject of section 3.</p>
+</div>
+<div class="figure" id="viz-neuron"><p class="figure-title">A single neuron</p><p class="figure-sub">Move the weights and inputs. Watch the pre-activation sum and the output change.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="layers-are-matrix-multiplications" class="scroll-mt-24 text-2xl">Layers are matrix multiplications</h2>
+<div class="prose-block">
+<p>One neuron asks one question. A useful layer asks thousands — side by side, in one move. Put, say, 3 neurons next to each other, each with its own weight vector, and stack those vectors as rows of a rectangle of numbers. A rectangle of numbers is a <strong>matrix</strong>; feeding one vector into that row of neurons is the same arithmetic as multiplying the matrix by the vector. This is why you'll hear "a layer is a matrix multiplication" — it's not a metaphor, it's bookkeeping for "lots of dot products at once".</p>
+<p>Do one by hand — three numbers in, two questions asked. The input vector <code>[1, 2, 0]</code> meets two neurons with weights <code>[2, 0, 1]</code> and <code>[1, 3, 0]</code>:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">question 1: (1×2) + (2×0) + (0×1) = 2<br>question 2: (1×1) + (2×3) + (0×0) = 7<br>answer: [2, 7]</p>
+<p>Three numbers in, two numbers out — and every answer is one dot product: first number × first number, plus second × second, plus third × third, read straight across. That's the whole mystery of "shapes", which is the one thing worth practicing here. A shape like <code>[2, 3]</code> just means "2 rows of 3 numbers". The rule for what's legal: <strong>the inner numbers must match and cancel — <code>[2, 3] × [3, 2] → [2, 2]</code>.</strong> The widget below is exactly this computation — the same input row <code>[1, 2, 0]</code> and the same two neuron rows — with the answer grid already filled in; hover any output cell and it shows you which row and column produced it.</p>
+<p>Two facts about why this matters beyond arithmetic practice:</p>
+<p><strong>It's all one operation.</strong> The model never processes "one neuron" or even "one layer" as a separate event — a whole block of thousands of dot products is fired as a single matrix multiply, and a whole sentence's worth of tokens is batched into the same multiply (a <code>[T, d]</code> slab of numbers, one row per token). That batching is exactly why graphics cards — built for giant matrix multiplies — are what LLMs run on. Essentially all of an LLM's compute is this one operation, done in different shapes.</p>
+<p><strong>One warning for when you read code.</strong> You'll see the same layer written two ways: <code>Wx</code> with the weight matrix shaped <code>[out, in]</code>, or <code>xW</code> with it shaped <code>[in, out]</code>. Nothing changes but the order of writing — but if you mix the two conventions, every shape you check will look wrong. Before trusting a shape in a paper or a codebase, check which convention it writes in.</p>
+</div>
+<div class="figure" id="viz-matmul"><p class="figure-title">Matrix multiplication, cell by cell</p><p class="figure-sub">Hover a cell in the output to see which row and column produced it.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="why-nonlinearity-is-not-optional" class="scroll-mt-24 text-2xl">Why nonlinearity is not optional</h2>
+<div class="prose-block">
+<p>You caught a preview of this in the neuron widget: with the activation switched to ReLU, a negative sum becomes zero; with "none", the negative number passes straight through. Small detail, huge consequence. This section is why.</p>
+<p>First, a name. A function is <strong>linear</strong> when scaling the input scales the output in exact proportion — double what goes in, double what comes out — and when you can chain two of them into one. Multiplying by 2 is linear. <code>max(0, x)</code> is not: double −4 and you get 0 either way, not double zero. The activation functions are all deliberately <em>not</em> linear — that's the whole point, and here's why:</p>
+<p>Suppose you skipped the squashing and just stacked plain matrix multiplies. Two layers in a row: the output is <code>W₂(W₁x)</code>. But doing "multiply by W₁, then multiply by W₂" is the same as multiplying once by one combined matrix — you can check this on tiny examples, and it holds for any size. So a hundred stacked linear layers are, mathematically, <strong>one layer</strong> wearing a costume. Depth would buy nothing. The squashing between layers is what stops each new layer from collapsing into the previous one.</p>
+<p>Why does depth matter at all? Because the squashing lets layers compose in ways a single multiply never can. A linear map can only stretch, shrink and rotate the whole space uniformly — like dragging a sheet of graph paper: straight lines stay straight, parallel lines stay parallel. A bent function can <em>fold</em> the space. And some questions need folding: imagine the words of a sentence as dots on a plane where "animal" dots and "verb" dots each form a little cloud, but the clouds are intermingled. No single straight cut separates them — but bend the plane once and they come apart. Each squashed layer adds a little more bending, and the model's thousands of tiny decisions are built from those bends.</p>
+<p>The specific squashes you'll meet, all plotted in the figure below (they differ only in <em>how</em> they bend, not <em>whether</em>):</p>
+<ul>
+<li><strong>ReLU</strong> — <code>max(0, x)</code>. The workhorse: cheap, and it made deep networks trainable. Its flaw: a neuron stuck in the negative region outputs zero no matter what arrives, and learns nothing more — "dies". The widget lets you drive a neuron into that state.</li>
+<li><strong>GELU</strong> — ReLU with a soft knee: small negatives slip through faintly instead of being clamped hard. The default in GPT-family models.</li>
+<li><strong>SwiGLU</strong> — used in Llama and most current open models. Not one function but a wiring pattern: it splits the layer's numbers into two halves and lets one half act as a volume knob on the other ("gate" it) — because whether a fact matters often depends on a second fact, and a multiplication between the halves expresses that. It needs three weight matrices instead of two, so implementations shrink the hidden width (to about ⅔ × 4 × d_model) to keep the parameter count level — and still come out better on quality. Its raw ingredient is <strong>SiLU</strong>, <code>x·sigmoid(x)</code>, the soft-knee function plotted below.</li>
+<li><strong>tanh</strong> — the pre-2012 default, shown for contrast. It squashes everything between −1 and +1, which sounds tidy, but "push any input, however extreme, and the output barely moves" is exactly the flatness that starves learning. Escaping it is what ReLU was invented for.</li>
+</ul>
+</div>
+<div class="figure" id="viz-activations"><p class="figure-title">Activation functions</p><p class="figure-sub">Compare shapes and see where each one passes, blocks or bends the signal.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="what-this-looks-like-in-a-real-model" class="scroll-mt-24 text-2xl">What this looks like in a real model</h2>
+<div class="prose-block">
+<p>Everything built so far — neurons, their matrix form, the squashing between — assembles into the part of a transformer block that does the private thinking (the other part, attention, which is about words consulting each other, is next lesson). It's called the <strong>feed-forward network</strong>, and it is exactly: widen, squash, narrow:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">FFN(x) = W_down · activation(W_up · x)</p>
+<p>Read it right to left, the way you read a pipeline: the arrow arrives as 4096 numbers; <code>W_up</code> expands it to 16384 (four times wider); the activation squashes each of those 16384 numbers; <code>W_down</code> contracts the result back to 4096, and that's what continues down the line.</p>
+<p>Why expand at all, and why squeeze back? Think of the wide middle as a row of inspectors. 4096 numbers arrive; 16384 inspectors each ask one small question of them ("is this heading toward a verb?", "does this look like the second half of a phone number?" — the questions are learned, not designed, and they don't correspond neatly to English). Each inspector who finds something adds a note. The squeeze at the end is the editor: it decides which notes actually matter for what happens next. Without the wide middle there aren't enough inspectors; without the squeeze, every note would get shouted downstream.</p>
+<p>The sizes are not decorative: at this default width the two matrices hold roughly 134 million numbers <em>per layer</em>, and the feed-forward parts of a model hold roughly <strong>two thirds of all its parameters</strong> — attention takes most of the rest. If you ever wondered where "70 billion parameters" are hiding, this is where most of them are. (SwiGLU, the gated pattern from the last section, is the same expand-squash-contract with three narrower matrices instead of two; GPT-family models use the two-matrix layout above.)</p>
+<p>One more reason to care where the parameters are: interpretability research suggests this expand/contract structure is where much of the model's <em>factual</em> knowledge lives — the up-projection acting like a set of keys, the down-projection like the values they retrieve. Lesson 1 said there is no database; this is the machinery that plays that role instead.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">A layer is: multiply by a weight matrix, add a bias, apply a nonlinearity. Stacking these without the nonlinearity would collapse into a single linear map, so the activation function is what makes depth worth anything.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="numeric" data-answer="2.0" data-tolerance="0.01" data-placeholder="a number">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A neuron has weights <code>[0.5, −1.0, 2.0]</code>, bias <code>1.0</code>, and ReLU activation. Input is <code>[2, 1, 0.5]</code>. What does it output?</p></div>
+<div class="note text-sm" data-ex-explain hidden>Sum: 0.5·2 + (−1)·1 + 2·0.5 = 1 − 1 + 1 = 1. Plus bias 1.0 gives 2.0. ReLU leaves positives untouched, so the output is 2.0.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="2">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>You multiply a <code>[8, 512]</code> matrix by a <code>[512, 2048]</code> matrix. What is the output shape?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">[8, 512]</button>
+<button type="button" data-opt="1">[512, 512]</button>
+<button type="button" data-opt="2">[8, 2048]</button>
+<button type="button" data-opt="3">[2048, 8]</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>The inner 512s must match and they cancel, leaving the outer dimensions: [8, 2048]. Here that would be 8 tokens, each expanded to a 2048-wide hidden layer.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What breaks if you remove every activation function from a 96-layer network?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Training becomes unstable but the model is still expressive</button>
+<button type="button" data-opt="1">The whole stack collapses mathematically into a single linear layer</button>
+<button type="button" data-opt="2">The model can no longer produce probabilities</button>
+<button type="button" data-opt="3">Nothing — activations only speed up training</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Composing linear maps gives a linear map. All 96 layers would be equivalent to one matrix, and no amount of depth would add representational power.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="numeric" data-answer="8.4" data-tolerance="0.2" data-placeholder="millions">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A feed-forward block with <code>d_model = 1024</code> and a 4× hidden width has two weight matrices and no biases. How many parameters is that, in millions? (Answer to one decimal place.)</p></div>
+<div class="note text-sm" data-ex-explain hidden>Hidden width is 4096. W_up is 4096×1024 = 4,194,304 and W_down is 1024×4096 = another 4,194,304. Total ≈ 8.4 million, per layer.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="multi" data-answer="0,1,3">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which are true of the feed-forward network inside a transformer block? Select all.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It is applied to each token position independently</button>
+<button type="button" data-opt="1">It typically holds more parameters than the attention part of the block</button>
+<button type="button" data-opt="2">It mixes information between different token positions</button>
+<button type="button" data-opt="3">It usually expands to a wider hidden dimension and then contracts back</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Position mixing is attention's job exclusively. The FFN never looks sideways — it transforms each position on its own, which is also what makes it trivially parallel.</div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="03-embeddings-meaning-as-direction.html" data-nav-prev>← 3. Embeddings: meaning as direction</a>
+      <a class="btn btn-primary" href="05-attention-queries-keys-and-values.html" data-nav-next>5. Attention: queries, keys and values →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l04.js" defer></script>
+</body>
+</html>

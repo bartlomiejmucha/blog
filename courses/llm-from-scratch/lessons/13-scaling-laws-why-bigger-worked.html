@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>13. Scaling laws: why bigger worked — LLMs from scratch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l13" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 13 / 18</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part IV · Training</span>
+      <h1 class="text-4xl leading-tight">13. Scaling laws: why bigger worked</h1>
+      <p class="lead">Loss falls as a predictable power law in parameters, data and compute. That predictability is what justified spending hundreds of millions of dollars on a single training run.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>State what a scaling law claims and what it does not</li>
+<li>Explain the Chinchilla result and its practical consequence</li>
+<li>Compute training compute with the 6ND rule</li>
+<li>Explain compute-optimal versus inference-optimal training</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="what-a-scaling-law-is" class="scroll-mt-24 text-2xl">What a scaling law is</h2>
+<div class="prose-block">
+<p>In 2020, OpenAI reported something unusual: language model loss falls as a <strong>power law</strong> in each of model size <code>N</code>, dataset size <code>D</code>, and compute <code>C</code>. On log-log axes, the relationship is a straight line, across many orders of magnitude.</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">L(N) ≈ L<sub>∞</sub> + (N<sub>c</sub> / N)<sup>α</sup></p>
+<p>The practical importance is not the equation but the <strong>predictability</strong>. Train a series of small models, fit the curve, extrapolate — and you can forecast the loss of a model 1000× larger before spending the money. Without that, no organisation would commit nine figures to a single run.</p>
+<p>Read the fine print, though:</p>
+<ul>
+  <li>The law predicts <strong>loss</strong>, not capability. The relationship between loss and whether a model can write correct SQL is far messier.</li>
+  <li>Returns are strongly diminishing. Each equal step down in loss costs exponentially more compute.</li>
+  <li>Power laws describe the range where they were fitted. They are not a guarantee about regions nobody has measured.</li>
+</ul>
+</div>
+<div class="figure" id="viz-scaling"><p class="figure-title">The scaling curve</p><p class="figure-sub">Move along the compute axis and see loss on both linear and log-log axes.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="chinchilla-the-correction" class="scroll-mt-24 text-2xl">Chinchilla: the correction</h2>
+<div class="prose-block">
+<p>The 2020 work suggested spending most additional compute on parameters. The field did: GPT-3 was 175B parameters trained on 300B tokens.</p>
+<p>In 2022, DeepMind's Chinchilla paper redid the experiments more carefully — varying model size <em>and</em> data together at fixed compute budgets — and found this was badly wrong. The result: for compute-optimal training, <strong>parameters and tokens should scale in roughly equal proportion</strong>, around 20 tokens per parameter.</p>
+<p>By that standard GPT-3 was undertrained by more than an order of magnitude. Chinchilla itself, at 70B parameters trained on 1.4T tokens, outperformed the 280B-parameter Gopher trained on far less data, using the same compute.</p>
+<p>The consequence was immediate and visible: the industry stopped racing on parameter count and started racing on data quantity and quality. Model sizes plateaued or fell while token counts exploded.</p>
+</div>
+<div class="figure" id="viz-chinchilla"><p class="figure-title">Compute-optimal frontier</p><p class="figure-sub">Fix a compute budget and slide the parameter/data split to find the loss minimum.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-6nd-rule" class="scroll-mt-24 text-2xl">The 6ND rule</h2>
+<div class="prose-block">
+<p>Training compute in FLOPs is well approximated by:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">C ≈ 6 × N × D</p>
+<p>where <code>N</code> is parameters and <code>D</code> is training tokens. The 6 breaks down as roughly 2 FLOPs per parameter for the forward pass and 4 for the backward pass.</p>
+<p>Worked example — a 7B model on 2T tokens: <code>6 × 7×10⁹ × 2×10¹² = 8.4×10²²</code> FLOPs. On 1000 H100s delivering roughly 160 teraFLOPs each after realistic utilisation losses, that is about 6,000 GPU-days, or a week of wall-clock time. The estimator below works the same arithmetic for any size you pick.</p>
+<p>The corresponding inference rule is <code>2N</code> FLOPs per generated token — forward pass only, no backward pass.</p>
+</div>
+<div class="figure" id="viz-flops"><p class="figure-title">Compute estimator</p><p class="figure-sub">Set parameters and tokens; see FLOPs, rough GPU-days, and an order-of-magnitude cost.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="why-production-models-are-not-compute-optimal" class="scroll-mt-24 text-2xl">Why production models are not compute-optimal</h2>
+<div class="prose-block">
+<p>Chinchilla optimises one thing: loss for a fixed <em>training</em> budget. That is the wrong objective if you are going to serve the model to millions of users, because inference cost scales with parameters and gets paid over and over.</p>
+<p>So the industry deliberately overtrains: take a smaller model and train it on far more than 20 tokens per parameter. Loss is slightly worse than a compute-optimal model at the same training cost, but the model is permanently cheaper and faster to serve. Llama 3 8B, trained on 15T tokens, is roughly 1,900 tokens per parameter — nearly a hundred times the Chinchilla ratio, and an entirely rational choice.</p>
+<p>What is changing now:</p>
+<ul>
+  <li><strong>Data is becoming the binding constraint.</strong> High-quality text on the internet is finite, which drives interest in synthetic data, multimodal data and multiple epochs.</li>
+  <li><strong>Mixture-of-experts</strong> breaks the tie between parameter count and inference cost, changing the shape of the trade-off (Lesson 17).</li>
+  <li><strong>Inference-time compute</strong> is a new scaling axis: spending more compute per query — longer reasoning chains, sampling many candidates — buys accuracy without any change to the weights. Scaling that has its own, separate curves.</li>
+</ul>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">Loss follows a power law in model size, dataset size and compute, giving straight lines on log-log axes. Chinchilla showed early models were far too large for their data; the compute-optimal ratio is roughly 20 tokens per parameter. Serving costs push production models past that, deliberately.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="numeric" data-answer="21" data-tolerance="0" data-placeholder="the power of 10">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Using <code>C ≈ 6ND</code>, training a 3-billion-parameter model on 500 billion tokens costs 9×10<sup>x</sup> FLOPs. What is x?</p></div>
+<div class="note text-sm" data-ex-explain hidden>6 × (3×10⁹) × (5×10¹¹). The mantissas give 6×3×5 = 90 and the powers give 10²⁰, so 90×10²⁰ = 9×10²¹. x = 21.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What did the Chinchilla paper establish?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">That larger models are always better regardless of data</button>
+<button type="button" data-opt="1">That for a fixed compute budget, parameters and training tokens should scale together at roughly 20 tokens per parameter</button>
+<button type="button" data-opt="2">That scaling laws do not hold above 100B parameters</button>
+<button type="button" data-opt="3">That data quality does not matter if there is enough of it</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>It showed the previous generation was drastically undertrained. The corrected ratio redirected the whole field from parameter count toward data.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why do companies deliberately train models past the compute-optimal token ratio?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Because it produces lower training loss</button>
+<button type="button" data-opt="1">Because inference cost scales with parameters and is paid on every request forever</button>
+<button type="button" data-opt="2">Because scaling laws no longer apply at large sizes</button>
+<button type="button" data-opt="3">Because it requires fewer GPUs</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Overtraining a smaller model trades a slightly worse loss for a permanently cheaper, faster model to serve. For a widely deployed product that is clearly the right trade.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="multi" data-answer="0,2,3">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which are accurate caveats about scaling laws? Select all.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">They predict loss, which does not translate straightforwardly into specific capabilities</button>
+<button type="button" data-opt="1">They guarantee that any capability will emerge given enough compute</button>
+<button type="button" data-opt="2">Returns diminish: each equal loss improvement costs exponentially more compute</button>
+<button type="button" data-opt="3">They were fitted over a measured range and extrapolation beyond it is an assumption</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>No scaling law guarantees a specific capability. It is a smooth curve about average next-token loss, and the mapping from that to task performance is empirical and uneven.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="numeric" data-answer="13" data-tolerance="1" data-placeholder="teraFLOPs">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A 13B-parameter model generates a 500-token response. Using the <code>2N</code> FLOPs-per-token rule, how many teraFLOPs (10<sup>12</sup>) of arithmetic is that in total?</p></div>
+<div class="note text-sm" data-ex-explain hidden>2 × 13×10⁹ = 2.6×10¹⁰ FLOPs per token; × 500 tokens = 1.3×10¹³ = 13 teraFLOPs. A modern GPU does hundreds of teraFLOPs per second, so the arithmetic is trivial — which is exactly why decode is memory-bandwidth-bound, not compute-bound.</div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="12-pretraining-how-the-weights-get-their-values.html" data-nav-prev>← 12. Pretraining: how the weights get their values</a>
+      <a class="btn btn-primary" href="14-post-training-sft-rlhf-and-dpo.html" data-nav-next>14. Post-training: SFT, RLHF and DPO →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l13.js" defer></script>
+</body>
+</html>

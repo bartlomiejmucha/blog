@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>16. RAG, tools and agents — LLMs from scratch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l16" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 16 / 18</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part V · Using and extending models</span>
+      <h1 class="text-4xl leading-tight">16. RAG, tools and agents</h1>
+      <p class="lead">Weights are frozen, knowledge goes stale and models cannot check anything. Retrieval and tool use fix that by putting the right text in the context and letting the model call out to real systems.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Describe the retrieval pipeline end to end</li>
+<li>Explain why embedding search alone is insufficient and what to add</li>
+<li>Explain how tool calling actually works under the hood</li>
+<li>Describe the agent loop and its characteristic failure modes</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="why-retrieval" class="scroll-mt-24 text-2xl">Why retrieval</h2>
+<div class="prose-block">
+<p>A trained model's knowledge is fixed at its data cutoff, cannot include your private documents, provides no sources, and cannot be updated without retraining. Retrieval-augmented generation addresses all four by changing the input rather than the model.</p>
+<p>The pipeline:</p>
+<ol>
+  <li><strong>Chunk</strong> your documents into passages.</li>
+  <li><strong>Embed</strong> each chunk into a vector with an embedding model and store it in a vector index.</li>
+  <li>At query time, <strong>embed the question</strong> and find the nearest chunks by cosine similarity (Lesson 3's geometry, at production scale).</li>
+  <li><strong>Insert</strong> the retrieved chunks into the prompt with an instruction to answer only from them.</li>
+  <li>Generate, ideally with citations back to the chunks.</li>
+</ol>
+<p>Note the division of labour: retrieval supplies the facts, the model supplies the language and synthesis. Failures in the answer are very often retrieval failures wearing a costume.</p>
+</div>
+<div class="figure" id="viz-rag"><p class="figure-title">Retrieval, step by step</p><p class="figure-sub">Type a question against a small corpus and watch ranking and prompt assembly. Scoring here is word overlap, not a neural embedding — the presets show where that difference bites.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="where-naive-rag-breaks" class="scroll-mt-24 text-2xl">Where naive RAG breaks</h2>
+<div class="prose-block">
+<p>The tutorial version — fixed 512-token chunks, top-5 cosine similarity — underperforms badly on real corpora. The standard remedies:</p>
+<ul>
+  <li><strong>Chunking.</strong> Fixed-size splits cut sentences and separate a claim from its qualifier. Split on structure (headings, paragraphs), overlap chunks, and prepend document/section titles to each chunk so it carries its own context.</li>
+  <li><strong>Hybrid search.</strong> Embeddings capture meaning but miss exact strings — error codes, product SKUs, surnames. Combine dense vectors with keyword search (BM25) and fuse the rankings. This is usually the single biggest quality win.</li>
+  <li><strong>Reranking.</strong> Retrieve 50 candidates cheaply, then score each against the query with a cross-encoder that reads both together. Far more accurate than comparing two independently computed vectors.</li>
+  <li><strong>Query rewriting.</strong> "What about the second one?" is unretrievable. Rewrite follow-ups into standalone queries using the conversation history.</li>
+  <li><strong>Order in the prompt.</strong> Given the lost-in-the-middle effect, put the strongest chunks at the beginning and end.</li>
+</ul>
+<div class="note"><p class="text-sm"><strong>Debugging rule:</strong> when a RAG system gives a wrong answer, always check first whether the correct chunk was retrieved at all. Most 'the model hallucinated' reports are 'the retriever missed'.</p></div>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="tool-calling-demystified" class="scroll-mt-24 text-2xl">Tool calling, demystified</h2>
+<div class="prose-block">
+<p>There is less magic here than the term suggests. The model cannot execute anything. What happens:</p>
+<ol>
+  <li>You describe available tools — names, descriptions, parameter schemas — in the request. The API formats them into the context.</li>
+  <li>The model, having been fine-tuned on this format, generates <strong>structured text</strong> naming a tool and its arguments.</li>
+  <li>Generation stops. <strong>Your code</strong> parses that, decides whether to run it, and executes the actual function.</li>
+  <li>The result is appended to the conversation as a new message.</li>
+  <li>The model is called again, now with the result in its context, and continues.</li>
+</ol>
+<p>Everything outside step 2 is your program. The model is a text generator that has learned a convention for asking. That framing matters for security: the model's request to call <code>delete_records</code> is a suggestion, and your code is the only thing that decides whether it happens.</p>
+<p>Practical notes: tool descriptions are prompts and deserve the same care; too many tools degrade selection accuracy (group them or filter by context); and constrained decoding — masking the logits so only tokens valid under the schema can be sampled — is how providers guarantee syntactically valid JSON.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="agents-the-loop-and-its-failure-modes" class="scroll-mt-24 text-2xl">Agents: the loop and its failure modes</h2>
+<div class="prose-block">
+<p>An agent is the tool-calling loop run repeatedly toward a goal: observe, decide, act, observe the result, repeat until done or out of budget.</p>
+<p>The characteristic failure modes are worth memorising, because they are all structural rather than incidental:</p>
+<ul>
+  <li><strong>Compounding error.</strong> At 95% reliability per step, a 20-step task succeeds about 36% of the time. Long autonomous chains need either much higher per-step reliability or verification between steps.</li>
+  <li><strong>Context growth.</strong> Every observation is appended. Long runs fill the window, get slow and expensive, and start losing early information.</li>
+  <li><strong>Loops.</strong> Retrying the same failing action indefinitely. Needs explicit step budgets and loop detection.</li>
+  <li><strong>Injection via tool results.</strong> Retrieved pages and API responses enter the context as text. A hostile web page can carry instructions. Everything from Lesson 15 applies here with higher stakes, because the model now has the ability to act.</li>
+</ul>
+<p>What makes agents work in practice: narrow scope, tools that are hard to misuse, verification steps (run the tests, check the schema), explicit budgets, and a human confirmation gate on anything irreversible.</p>
+</div>
+<div class="figure" id="viz-agent"><p class="figure-title">Reliability compounding</p><p class="figure-sub">Set per-step reliability and step count to see the probability that a whole task succeeds.</p></div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">RAG embeds documents into a vector index, retrieves chunks similar to the query, and puts them in the context so the model can ground its answer. Tool calling is the model emitting structured text your code executes and feeds back. Agents are that loop, repeated, with all the compounding-error risk that implies.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="order">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">put in order</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Order the steps of a RAG query.</p></div>
+<div class="space-y-2" data-ex-order>
+<div data-item="0"><span>Chunk and embed the documents into a vector index ahead of time</span></div>
+<div data-item="1"><span>Embed the incoming question</span></div>
+<div data-item="2"><span>Retrieve the nearest chunks by similarity</span></div>
+<div data-item="3"><span>Insert the chunks into the prompt with an instruction to answer from them</span></div>
+<div data-item="4"><span>Generate the answer with citations</span></div>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Indexing happens offline; embedding the query, retrieving, assembling the prompt and generating happen per request.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A RAG system fails to find a document containing the exact error code <code>ERR_5521</code>. What is the most likely fix?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Increase the temperature</button>
+<button type="button" data-opt="1">Add keyword search alongside embedding search and fuse the rankings</button>
+<button type="button" data-opt="2">Use a larger language model</button>
+<button type="button" data-opt="3">Increase the chunk size</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Dense embeddings encode meaning and are weak on exact rare strings. Hybrid dense + BM25 retrieval is the standard fix and usually the largest single quality improvement.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>When a model 'calls a tool', what does the model itself actually produce?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">A direct network request to the API</button>
+<button type="button" data-opt="1">Structured text naming a tool and its arguments, which your code then parses and executes</button>
+<button type="button" data-opt="2">A compiled function call</button>
+<button type="button" data-opt="3">A database transaction</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>The model emits text in a learned format and stops. Execution, permission checks and feeding back the result are entirely your program's responsibility — which is exactly where the security boundary belongs.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="numeric" data-answer="35" data-tolerance="1.5" data-placeholder="percent">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>An agent completes each step correctly 90% of the time, independently. What is the probability it completes a 10-step task with no errors? Give it as a percentage, to the nearest whole number.</p></div>
+<div class="note text-sm" data-ex-explain hidden>0.9¹⁰ ≈ 0.349, so about 35%. Compounding is brutal, and it is the core argument for short chains, verification between steps, and human gates on irreversible actions.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="multi" data-answer="0,1,3">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which improve a naive RAG pipeline? Select all.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Reranking a larger candidate set with a cross-encoder</button>
+<button type="button" data-opt="1">Rewriting conversational follow-up questions into standalone queries</button>
+<button type="button" data-opt="2">Always using the largest possible chunk size</button>
+<button type="button" data-opt="3">Prepending document and section titles to each chunk</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Bigger chunks are not automatically better — they dilute the embedding and waste context. Chunk on structure, keep chunks self-describing, rerank, and normalise the query.</div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="15-prompting-in-context-learning-and-chain-of-thought.html" data-nav-prev>← 15. Prompting, in-context learning and chain of thought</a>
+      <a class="btn btn-primary" href="17-making-models-cheap-quantization-lora-moe-speculative-decoding.html" data-nav-next>17. Making models cheap: quantization, LoRA, MoE, speculative decoding →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l16.js" defer></script>
+</body>
+</html>

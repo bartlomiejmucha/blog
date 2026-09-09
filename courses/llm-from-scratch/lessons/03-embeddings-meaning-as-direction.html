@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>3. Embeddings: meaning as direction — LLMs from scratch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l03" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 3 / 18</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part I · Foundations</span>
+      <h1 class="text-4xl leading-tight">3. Embeddings: meaning as direction</h1>
+      <p class="lead">Each token id becomes a long list of numbers. Those numbers place the token in a space where geometric closeness means something like similarity of meaning.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Explain what the embedding matrix is and what its shape means</li>
+<li>Compute a dot product and a cosine similarity by hand</li>
+<li>Reason about why direction matters more than distance</li>
+<li>Distinguish static token embeddings from contextual representations</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="from-id-to-vector" class="scroll-mt-24 text-2xl">From id to vector</h2>
+<div class="prose-block">
+<p>Last lesson ended with your sentence chopped into pieces and each piece replaced by a number — an <em>id</em>, like 1842. But notice what that id actually is: a label, a shelf number. Nothing about the number 1842 resembles "dog", and nothing tells the machine what dog-ness is. If ids were assigned by lottery, <code>dog</code> and <code>puppy</code> might get numbers a million apart. A shelf number carries no meaning.</p>
+<p>So the machine's next move is a lookup. Somewhere in memory there is an enormous table — one row per vocabulary entry — and row 1842 is a long list of numbers, say:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">dog → [0.21, -0.87, 0.44, … ]  (thousands of numbers)</p>
+<p>That list is the <strong>embedding</strong> of "dog". The table itself is the <strong>embedding matrix</strong>, and its size tells you everything: "100,000 by 4096" means 100,000 vocabulary entries, each stored as a list of 4096 numbers — about 410 million numbers in the table. Nobody chose them by hand. They started as random noise and were nudged, billions of times, by the training process from Lesson 12 until predictions got better. You can't read a single row and understand it; the meaning is in the <em>pattern</em>, which only becomes visible when you compare rows.</p>
+<p>Why bother turning a label into a 4096-number list? Because of what lists of numbers can do that labels can't: <strong>be compared and combined</strong>. "Dog" and "puppy" get lists that are <em>close together</em>; "dog" and "because" get lists that point in different directions. The machine can then do arithmetic on closeness — which is the whole content of the next two sections. Before that, one thing to get straight, because everything below leans on it:</p>
+<p><strong>A list of numbers is an arrow.</strong> This sounds like a leap; it isn't. Take the list [2, 1]. Read it as instructions: "from the centre of a map, walk 2 steps east, then 1 step north." Draw the straight line from start to finish and you have an <em>arrow</em>. A 4096-number list is the same idea with 4096 directions instead of two — hard to picture, but the arithmetic doesn't care; it's identical. So when this lesson says "meaning as direction", it means: every piece of text becomes an arrow, and similar things point similar ways.</p>
+<p>One warning about those 4096 numbers: no single one means anything on its own. There is no "animal" slot or "plural" slot — concepts are spread across many numbers at once, several concepts sharing the same numbers. (The technical name is <em>superposition</em>.) You only ever see meaning by <em>comparing</em> arrows — which is exactly what the next section is about.</p>
+<div class="note"><p class="text-sm"><strong>Why 4096, and why would you ever change it?</strong> It's a dial, not a law — a size chosen per model by experiment. The trade-off: more numbers per arrow = more room for concepts to share the space with less crosstalk; but every operation gets heavier (the table grows with vocab × width, and the transformer blocks that come later grow roughly with the square of it). Small models use 512–1024, mid-size ones around 4096, big ones 8192 and up. Powers of two are popular for one unromantic reason: GPU matrix units run aligned shapes faster. You'll see the same numbers again in Lesson 4, where the arithmetic itself is the topic.</p></div>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="similarity-is-an-angle" class="scroll-mt-24 text-2xl">Similarity is an angle</h2>
+<div class="prose-block">
+<p>You can already feel what "similar direction" means — two arrows pointing roughly the same way look similar. The machine can't <em>see</em>, so it needs arithmetic that answers the same question. Two operations do almost all the work, and you are going to do both by hand.</p>
+<p><strong>Operation 1: the dot product — a "do they agree?" score.</strong> Take two arrows, multiply their numbers position by position, and add the results up. That's the whole recipe:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">a = [2, 1] and b = [1, 2]<br>dot = (2×1) + (1×2) = 4</p>
+<p>Why would anyone call that "similarity"? Look at what the multiplication does to matching signs: two positives multiplied give a positive contribution; a positive times a negative gives a negative one. So when the two arrows "pull the same way" on a dimension, that dimension adds to the score; when they pull opposite ways, it subtracts. Big positive score = they agree on most dimensions. Near zero or negative = they don't. The <code>Σ</code> symbol you'll see in textbooks (<code>a·b = Σ aᵢbᵢ</code>) just means "add these up over every dimension" — two additions in this example, thousands in a real model, same recipe.</p>
+<p><strong>Operation 2: cosine — the same score, with length cancelled out.</strong> The dot product has a flaw: double the length of one arrow and the score doubles too, even though the arrow points exactly where it did. Long arrows would crowd short ones out of every comparison. The fix is to divide the dot product by both lengths:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">cos = dot ÷ (length of a × length of b)<br>length of [2,1] = √(2² + 1²) = √5 ≈ 2.24&nbsp;&nbsp;(Pythagoras — the straight-line distance from the centre to the arrow's tip)<br>cos = 4 ÷ (2.24 × 2.24) = 0.80</p>
+<p>Because the lengths cancelled, cosine can only ever say one of three things, and it always lands between −1 and 1: <strong>1</strong> = exactly the same direction, <strong>0</strong> = at right angles, unrelated, <strong>−1</strong> = opposite directions. In the interactive, the readout's "angle" is just this number translated into degrees — drag a tip and watch them move together.</p>
+<p>Why bother cancelling length? Because in trained embeddings, length mostly tracks how <em>frequent</em> a word is, not what it <em>means</em> — and meaning is what we want to compare. This is why every embedding-search tool you'll meet (Lesson 16) measures the angle, not the raw distance.</p>
+<p><strong>Try both by hand before you drag anything.</strong> For <code>a = [2, 1]</code> and <code>b = [1, 2]</code>: the dot product is 4, the cosine is 0.80 — those are exactly the numbers the readout shows at the interactive's starting position, so you can check your arithmetic against the machine's. Then drag one tip so the arrows point the same way but one is clearly longer, and find the pair of readout numbers that proves length and direction are separate things.</p>
+</div>
+<div class="figure" id="viz-vectors"><p class="figure-title">Vectors, dot products and cosine</p><p class="figure-sub">Drag either arrow. Real embeddings have thousands of dimensions; the arithmetic is identical.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="structure-in-the-space" class="scroll-mt-24 text-2xl">Structure in the space</h2>
+<div class="prose-block">
+<p>Now the part that makes people do a double-take. You've seen arrows compared. It turns out you can also <em>add and subtract</em> them — pair up the numbers and do the arithmetic position by position — and on trained embeddings the results sometimes land on another word's arrow. Here is the famous demonstration, from word2vec back in 2013:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">king − man + woman ≈ queen</p>
+<p>Read it as walking directions. Start at the <code>king</code> arrow. Subtracting <code>man</code> means walking <em>backwards along your own arrow</em> — backing off toward the centre — and adding <code>woman</code> means then walking out along <code>woman</code>'s direction. In the toy space below those two moves land you near <code>queen</code>'s arrow, at cosine 0.99. Why would geometry do that? Nobody programmed the analogy: the space was trained to predict text, and English text repeats this pattern — wherever you see one member of a king/queen, man/woman, prince/princess pair, the others tend to appear in similar company, so prediction pushed the arrows into consistent clusters.</p>
+<p>That's the honest version of "meaning as direction" — and here is the honest warning that goes with it: <strong>the analogy is a tendency, not a law.</strong> It works cleanly for a few showcase pairs and gets messier the further you push it; real embeddings are optimised for prediction, not for tidy geometry, and the toy space below is hand-designed to show the effect at its clearest. What you should take away is the reliable part: <strong>relationships between words show up as consistent directions in the space, and later parts of the model compute with those directions.</strong></p>
+<p>Play with the space below. Click words and read the ranked list of nearest neighbours — check that <code>cat</code>'s top matches are <code>dog</code> and <code>puppy</code> (the animals cluster), and that <code>run</code>, <code>running</code> and <code>ran</code> sit nearly on top of each other (same meaning, different spellings — the space groups the <em>meaning</em>, not the letters). Then try the analogy tool: pick any three words, and it computes <em>first minus second plus third</em>, returning whichever word's arrow the result lands closest to.</p>
+</div>
+<div class="figure" id="viz-embed-space"><p class="figure-title">A toy embedding space</p><p class="figure-sub">Click a word to see its nearest neighbours by cosine similarity, and try the analogy tool.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="static-versus-contextual" class="scroll-mt-24 text-2xl">Static versus contextual</h2>
+<div class="prose-block">
+<p>One distinction finishes the lesson, and it's the one most explanations — and most people — get wrong, so be precise about it. It starts from an honest limitation: the embedding table is a lookup, and a lookup gives the same answer every time.</p>
+<p>The word <code>bank</code> has one row in the table. Financial institution and river side get <em>the identical starting arrow</em>, because the table knows nothing about your sentence — you look a word up <em>before</em> reading it, the same way you look up a word in a paper dictionary before you've read the paragraph. (If you've ever seen a dictionary give you the financial meaning first for a sentence about fishing, you know this limitation isn't unique to machines.)</p>
+<p>So how <em>does</em> the model eventually tell the two senses apart? The lookup stage is finished by then — it hands off, like a relay runner passing the baton, to the next station: the transformer blocks (station 3 of Lesson 1's assembly line). What they do is <strong>rewrite the arrows</strong>, and here is the one idea to hold onto: each word's arrow <em>knows where it sits in the sentence</em> — whether it's the first word, the third, the last. And each block lets every word <strong>look around at the other words and blend what it finds into its own arrow.</strong> In "river bank", the arrow at <code>bank</code> consults the arrow at <code>river</code> and drifts away from the money sense. In "bank account", it consults <code>account</code> and drifts the other way. Same starting arrow — different finished arrow, because of who the word was sitting next to.</p>
+<p>The fixed thing is the <em>starting</em> arrow; the finished, context-shaped one is what the next stage actually predicts from. Building those context-shaped arrows is precisely the job of attention (Lesson 5), and it's the main thing that separates a modern LLM from the older word2vec systems, which had no way to do it.</p>
+<p>Two facts you'll need later — skim them now, meet them properly in Lessons 8–9:</p>
+<ul>
+<li>The arrow at each position has a name: the <strong>residual stream</strong>. Picture it as a running notes page per word — every block reads the current page and adds its findings to it. ("Residual" just means "what's left over so far".) It is the working memory for that position.</li>
+<li>Many models <strong>reuse</strong> the same table on the way out. It was used at the start to look each word's arrow up; at the end it's turned around and used to score candidate answers — the model's final question is literally "which vocabulary word's arrow does my finished arrow point at most?" (This is <em>weight tying</em>; it saves hundreds of millions of parameters.) One subtlety for later: that scoring uses the raw dot product, not the cosine — so a long arrow can beat a short one pointing the same way.</li>
+</ul>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">An embedding is a learned vector per vocabulary entry, stored in a matrix of shape [vocab, d_model]. Similarity is measured by cosine of the angle between vectors. These are the starting representations; every transformer layer then edits them using context.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="numeric" data-answer="4" data-tolerance="0.001" data-placeholder="a number">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Compute the dot product of <code>a = [2, 0, 1]</code> and <code>b = [3, 4, -2]</code>.</p></div>
+<div class="note text-sm" data-ex-explain hidden>2·3 + 0·4 + 1·(−2) = 6 + 0 − 2 = 4. Positive, so the vectors broadly agree in direction.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="numeric" data-answer="1.0" data-tolerance="0.01" data-placeholder="between -1 and 1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Now the cosine similarity of <code>a = [3, 4]</code> and <code>b = [6, 8]</code>.</p></div>
+<div class="note text-sm" data-ex-explain hidden>The long way: a·b = 3·6 + 4·8 = 50, ‖a‖ = √(9+16) = 5, ‖b‖ = √(36+64) = 10, so cos = 50 / (5·10) = 1. The short way: b is exactly 2a, so the two point in the identical direction and the cosine has to be 1 without any arithmetic at all. Note the dot product is 50 while the cosine is 1 — magnitude affects one and not the other.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>An embedding matrix has shape <code>[128000, 4096]</code>. What do those numbers mean?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">128000 dimensions per token, 4096 tokens in the vocabulary</button>
+<button type="button" data-opt="1">128000 vocabulary entries, each represented by a 4096-dimensional vector</button>
+<button type="button" data-opt="2">128000 training documents, 4096 layers</button>
+<button type="button" data-opt="3">128000 tokens of context, 4096 attention heads</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Rows are vocabulary entries, columns are model dimensions. Row <em>i</em> is the learned vector for token id <em>i</em>. That table alone holds ~524 million parameters.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="2">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why does the word <code>bank</code> end up meaning different things in "river bank" and "bank account" if the embedding lookup is static?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">The tokenizer produces different ids depending on nearby words</button>
+<button type="button" data-opt="1">The embedding table stores several vectors per token and picks one</button>
+<button type="button" data-opt="2">Attention layers modify the vector at each position using the surrounding positions</button>
+<button type="button" data-opt="3">A separate disambiguation model runs before the LLM</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>The starting vector is identical. Contextualisation is created by the transformer layers, which read other positions and add information into each position's residual stream.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="multi" data-answer="0,2,3">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which statements about embedding geometry are accurate? Select all.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Cosine similarity ignores vector length and measures direction only</button>
+<button type="button" data-opt="1">Every individual dimension corresponds to one human-interpretable concept</button>
+<button type="button" data-opt="2">A model can represent more concepts than it has dimensions by letting them share directions</button>
+<button type="button" data-opt="3">Consistent vector offsets can encode relationships like singular→plural</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Individual dimensions are generally not interpretable on their own — concepts are distributed across directions, and superposition lets many more features share the space than there are axes.</div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="02-tokens-how-text-becomes-numbers.html" data-nav-prev>← 2. Tokens: how text becomes numbers</a>
+      <a class="btn btn-primary" href="04-neurons-matrices-and-nonlinearity.html" data-nav-next>4. Neurons, matrices and nonlinearity →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l03.js" defer></script>
+</body>
+</html>

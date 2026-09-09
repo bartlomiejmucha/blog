@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>11. Context windows and the KV cache — LLMs from scratch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l11" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 11 / 18</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part III · Generation</span>
+      <h1 class="text-4xl leading-tight">11. Context windows and the KV cache</h1>
+      <p class="lead">Why the first token of a response is slow and the rest are fast, why long prompts cost memory rather than just time, and what actually fills up when you 'run out of context'.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Explain what the KV cache stores and why it is possible</li>
+<li>Distinguish the prefill and decode phases and their bottlenecks</li>
+<li>Compute KV cache size for a given model and sequence length</li>
+<li>Explain why decoding is memory-bandwidth bound, and what that implies</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="the-redundancy" class="scroll-mt-24 text-2xl">The redundancy</h2>
+<div class="prose-block">
+<p>Naive generation is absurdly wasteful. To produce token 101 you run the model over tokens 1–100. To produce token 102 you run it over tokens 1–101 — recomputing everything you just computed.</p>
+<p>The causal mask makes the fix possible. Position 50 can only attend to positions ≤ 50, so <strong>adding token 101 cannot change anything about position 50</strong>. Its key and value vectors are final the moment they are computed.</p>
+<p>So cache them. For every layer and every head, store the K and V vectors of every token processed so far. Generating a new token then requires computing Q, K, V for <em>one</em> position, attending against the whole cache, and appending the new K and V.</p>
+<p>Note that only K and V are cached, never Q. A query is used once, at the step that created it, and then is of no further use.</p>
+</div>
+<div class="figure" id="viz-kvcache"><p class="figure-title">Cache growth</p><p class="figure-sub">Generate tokens with the cache on and off, and compare the work done at each step.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="two-phases-with-different-physics" class="scroll-mt-24 text-2xl">Two phases with different physics</h2>
+<div class="prose-block">
+<p>This split is the single most useful thing to understand about LLM serving.</p>
+<p><strong>Prefill</strong> — processing your prompt. All prompt tokens go through the model together in one parallel pass, filling the cache. This is a big matrix–matrix multiplication: the GPU is doing heavy arithmetic and is <strong>compute-bound</strong>. Cost scales with prompt length (plus a quadratic term from attention). It determines your time-to-first-token.</p>
+<p><strong>Decode</strong> — generating the response, one token at a time. Each step is a matrix–<em>vector</em> multiplication: to produce a single token, the GPU must read <em>every weight in the model</em> from memory and use each one for very little arithmetic. The chip is starved for data, not for compute. Decode is <strong>memory-bandwidth-bound</strong>.</p>
+<p>Consequences that surprise people:</p>
+<ul>
+  <li>Decoding one token at a time uses a tiny fraction of a GPU's arithmetic capability. The hardware is mostly idle, waiting on memory.</li>
+  <li>The weights are not the only thing read each step — the attention at every layer reads the whole KV cache too. That is why decoding slows down as a conversation grows: at 8k tokens the cache in the example below is 21.5 GB against 140 GB of weights, but at 128k it is 344 GB and has become the larger of the two reads.</li>
+  <li><strong>Batching is nearly free during decode.</strong> The weights are read once and shared across all sequences in the batch, so serving 32 users costs barely more time per step than serving one. This is why batch throughput is the metric providers optimise.</li>
+  <li>Making weights smaller — quantization, Lesson 17 — speeds up decode almost linearly, because the bottleneck is bytes moved, not maths done.</li>
+  <li>Output tokens are typically priced higher than input tokens, and this is why: input is processed in parallel, output is strictly sequential.</li>
+</ul>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="how-big-is-the-cache" class="scroll-mt-24 text-2xl">How big is the cache?</h2>
+<div class="prose-block">
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-xs leading-6 text-ink-100">cache_bytes = 2 × n_layers × n_kv_heads × d_head × seq_len × bytes_per_value</p>
+<p>The 2 is for K and V. Worked example — a 70B-class model: 80 layers, 64 heads with <code>d_head</code> 128, fp16 (2 bytes), 8k tokens:</p>
+<p class="font-mono text-xs text-ink-300">2 × 80 × 64 × 128 × 8192 × 2 ≈ 21.5 GB</p>
+<p>That is on top of 140 GB of weights, for a <em>single</em> sequence. Now serve 20 users concurrently and the cache alone is 430 GB. This is the reason grouped-query attention exists: with 8 KV groups instead of 64 heads, that 21.5 GB becomes 2.7 GB.</p>
+<p>Other techniques in production use: <strong>paged attention</strong> (vLLM), which stores the cache in fixed-size blocks like operating-system virtual memory to eliminate fragmentation; <strong>prefix caching</strong>, which reuses the cache for a shared system prompt across requests; and cache quantization to 8 or 4 bits.</p>
+</div>
+<div class="figure" id="viz-cachesize"><p class="figure-title">KV cache calculator</p><p class="figure-sub">Set the model shape and sequence length; compare full multi-head against GQA.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="what-running-out-of-context-means" class="scroll-mt-24 text-2xl">What 'running out of context' means</h2>
+<div class="prose-block">
+<p>The context window is the maximum number of tokens in a single forward pass — prompt plus generated output together. Hitting it means one of three things happened:</p>
+<ul>
+  <li>The position encoding runs past what the model was trained on (Lesson 7).</li>
+  <li>The KV cache no longer fits in memory.</li>
+  <li>The provider set a limit for cost reasons.</li>
+</ul>
+<p>Practical strategies when you exceed it: sliding-window attention (each token only attends to the last N, keeping cost linear but genuinely losing distant information); summarising older conversation turns; retrieval instead of stuffing (Lesson 16); or the <strong>attention sink</strong> trick, keeping the first few tokens permanently in the cache alongside a sliding window, which preserves quality far better than a naive window.</p>
+<div class="note"><p class="text-sm"><strong>Longer context is not free accuracy.</strong> Beyond cost, models attend less reliably to the middle of very long inputs. If a document is 100k tokens and only 2k are relevant, retrieving those 2k usually beats sending everything — cheaper and often more accurate.</p></div>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">Because of causal masking, past tokens' keys and values never change. Cache them and each new token costs one forward pass over a single position. Prefill is compute-bound and parallel; decode is memory-bandwidth-bound and sequential. The cache is what makes long context expensive in memory.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why is it valid to cache the key and value vectors of past tokens?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Because attention weights are always the same</button>
+<button type="button" data-opt="1">Because causal masking means a past position never attends to later tokens, so its K and V never change</button>
+<button type="button" data-opt="2">Because the embedding table is static</button>
+<button type="button" data-opt="3">Because the FFN does not mix positions</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Nothing that happens later can influence an earlier position's representation in a causal model. That makes its K and V final and safe to reuse forever.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which is the bottleneck during the decode phase of generation?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">GPU arithmetic throughput</button>
+<button type="button" data-opt="1">Memory bandwidth — reading all the model weights for each single token</button>
+<button type="button" data-opt="2">The tokenizer</button>
+<button type="button" data-opt="3">Network latency to the client</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>One token requires reading every weight and doing almost no arithmetic per byte read. This is why quantization gives near-linear decode speedups and why batching is close to free.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="numeric" data-answer="128" data-tolerance="15" data-placeholder="megabytes">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A model has 32 layers, 8 KV heads, <code>d_head</code> = 128, and stores the cache in fp16 (2 bytes). How many megabytes does the cache take for 1024 tokens? (1 MB = 1,048,576 bytes; answer to the nearest 10 MB.)</p></div>
+<div class="note text-sm" data-ex-explain hidden>2 × 32 × 8 × 128 × 1024 × 2 = 134,217,728 bytes = exactly 128 MB. Scale to 32k tokens and it is 4 GB — per sequence.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="multi" data-answer="0,1,2">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which are true of the prefill phase? Select all.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">All prompt tokens are processed in parallel in one pass</button>
+<button type="button" data-opt="1">It is generally compute-bound rather than memory-bandwidth-bound</button>
+<button type="button" data-opt="2">It determines time-to-first-token</button>
+<button type="button" data-opt="3">It happens once per generated token</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Prefill runs once for the prompt. The per-token work afterwards is decode, which has completely different performance characteristics.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>You must serve many concurrent users of a long-context model and are running out of GPU memory. Which change targets the KV cache most directly?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Lowering the temperature</button>
+<button type="button" data-opt="1">Switching from multi-head to grouped-query attention</button>
+<button type="button" data-opt="2">Adding more transformer layers</button>
+<button type="button" data-opt="3">Increasing the vocabulary size</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>GQA cuts the number of stored K/V heads by the grouping factor, shrinking the cache proportionally. Paged attention and cache quantization are the other standard levers.</div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="10-sampling-turning-probabilities-into-text.html" data-nav-prev>← 10. Sampling: turning probabilities into text</a>
+      <a class="btn btn-primary" href="12-pretraining-how-the-weights-get-their-values.html" data-nav-next>12. Pretraining: how the weights get their values →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l11.js" defer></script>
+</body>
+</html>

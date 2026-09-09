@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>8. The transformer block — LLMs from scratch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l08" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 8 / 18</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part II · The transformer</span>
+      <h1 class="text-4xl leading-tight">8. The transformer block</h1>
+      <p class="lead">Attention plus a feed-forward network, wrapped in residual connections and normalisation. This unit, repeated dozens of times, is the entire model.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Draw a transformer block from memory, in the correct order</li>
+<li>Explain what residual connections do for gradients and for representation</li>
+<li>Explain LayerNorm and RMSNorm and why pre-norm won</li>
+<li>Describe the residual stream as a shared communication channel</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="the-block-in-four-lines" class="scroll-mt-24 text-2xl">The block, in four lines</h2>
+<div class="prose-block">
+<p>Modern (pre-norm) transformer block, exactly as implemented:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm leading-7 text-ink-100">
+x = x + Attention(Norm(x))<br>
+x = x + FFN(Norm(x))
+</p>
+<p>Two sub-layers. Each one <strong>normalises a copy</strong> of the input, computes something, and <strong>adds the result back</strong> to the untouched original. Note what is <em>not</em> happening: nothing is ever overwritten. Each sub-layer contributes an increment.</p>
+<p>The division of labour is clean:</p>
+<ul>
+  <li><strong>Attention moves information between positions.</strong> It is the only part of the model that looks sideways.</li>
+  <li><strong>The FFN transforms each position independently.</strong> It never looks sideways at all.</li>
+</ul>
+<p>Interleaving them is what lets a stack of blocks build progressively richer, context-aware representations: gather, process, gather, process.</p>
+</div>
+<div class="figure" id="viz-block"><p class="figure-title">Dataflow through a block</p><p class="figure-sub">Follow a vector through both sub-layers. Toggle the residual connections off to see what breaks.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="residual-connections" class="scroll-mt-24 text-2xl">Residual connections</h2>
+<div class="prose-block">
+<p>The <code>x +</code> is easy to overlook and is doing two crucial jobs.</p>
+<p><strong>Gradient flow.</strong> In a plain deep stack, the gradient is multiplied by each layer's Jacobian on the way back; over 96 layers those factors compound and the signal explodes or vanishes. A residual connection gives the gradient an identity path — an additive route straight from the loss to the earliest layers. Without it, models this deep would not train at all.</p>
+<p><strong>The residual stream as a channel.</strong> The more modern reading: the vector flowing through the model is a shared communication bus. Every sub-layer <em>reads</em> from it (through its projection matrices) and <em>writes</em> to it (by adding). An early layer can deposit a piece of information that a layer 40 blocks later retrieves, without any intervening layer needing to preserve it deliberately.</p>
+<p>This picture also explains a practical fact: because everything is added into one stream, features occupy directions in that space, and different circuits communicate by writing to and reading from different directions.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="normalisation-and-where-to-put-it" class="scroll-mt-24 text-2xl">Normalisation, and where to put it</h2>
+<div class="prose-block">
+<p><strong>LayerNorm</strong> takes the vector at a position, subtracts its mean, divides by its standard deviation, then scales and shifts by learned parameters <code>γ</code> and <code>β</code>. It keeps activation magnitudes in a stable range so that training does not drift into overflow or collapse.</p>
+<p><strong>RMSNorm</strong> drops the mean subtraction and the shift, dividing only by the root-mean-square. It is cheaper, empirically just as good, and is what Llama and most recent models use.</p>
+<p>The placement question turned out to matter more than the choice of norm:</p>
+<ul>
+  <li><strong>Post-norm</strong> (original 2017): <code>x = Norm(x + Sublayer(x))</code>. The residual path itself gets normalised, which weakens the clean identity route. Deep post-norm models need careful learning-rate warmup and are prone to divergence.</li>
+  <li><strong>Pre-norm</strong> (everything modern): <code>x = x + Sublayer(Norm(x))</code>. The residual path stays untouched all the way from input to output. Far more stable, trains at higher learning rates, scales to great depth.</li>
+</ul>
+<p>One consequence of pre-norm: the residual stream itself is never normalised on its way through, so its magnitude grows steadily with depth — visible in the figure below. Every pre-norm model therefore ends with a final norm after the last block, before the output projection. It is not an optional extra; without it the unbounded stream hits the output projection directly.</p>
+</div>
+<div class="figure" id="viz-norm"><p class="figure-title">Pre-norm vs post-norm</p><p class="figure-sub">Simulated activation magnitude through a deep stack under both placements.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="counting-the-parameters" class="scroll-mt-24 text-2xl">Counting the parameters</h2>
+<div class="prose-block">
+<p>For one block with <code>d = d_model</code> and a 4× FFN, ignoring biases and norm parameters:</p>
+<div class="overflow-x-auto"><table>
+<tr><th>Component</th><th>Shapes</th><th>Parameters</th></tr>
+<tr><td>W_Q, W_K, W_V, W_O</td><td>four of [d, d]</td><td>4d²</td></tr>
+<tr><td>FFN up and down</td><td>[4d, d] and [d, 4d]</td><td>8d²</td></tr>
+<tr><td><strong>Total per block</strong></td><td></td><td><strong>12d²</strong></td></tr>
+</table></div>
+<p>So a 32-layer model with <code>d_model = 4096</code> holds roughly <code>32 × 12 × 4096²</code> ≈ 6.4 billion parameters in its blocks, plus the embedding table. The useful rule of thumb: <strong>parameters ≈ 12 × n_layers × d_model²</strong>, with about two thirds of it in the feed-forward networks.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">A block is: normalise, attend, add back; normalise, feed forward, add back. The residual stream carries information straight through; each sub-layer reads it, computes something, and adds a correction. Pre-norm placement is what makes very deep stacks trainable.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="order">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">put in order</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Put the operations of one modern pre-norm transformer block in order.</p></div>
+<div class="space-y-2" data-ex-order>
+<div data-item="0"><span>Normalise the input vector</span></div>
+<div data-item="1"><span>Run multi-head attention on the normalised copy</span></div>
+<div data-item="2"><span>Add the attention output back to the original vector</span></div>
+<div data-item="3"><span>Normalise the updated vector</span></div>
+<div data-item="4"><span>Run the feed-forward network on it</span></div>
+<div data-item="5"><span>Add the FFN output back</span></div>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Norm → attend → add → norm → FFN → add. The original vector is never replaced; each sub-layer adds a correction to the residual stream.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What is the primary reason residual connections make very deep transformers trainable?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">They reduce the parameter count</button>
+<button type="button" data-opt="1">They give gradients an additive identity path back to early layers, avoiding vanishing or exploding through 90+ multiplications</button>
+<button type="button" data-opt="2">They normalise activations to unit variance</button>
+<button type="button" data-opt="3">They let attention see future tokens</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Normalisation is what handles activation scale; residuals handle gradient flow and give layers a shared channel to communicate through.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="2">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which sub-layer of a transformer block moves information <em>between</em> token positions?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">The feed-forward network</button>
+<button type="button" data-opt="1">The normalisation layer</button>
+<button type="button" data-opt="2">Attention</button>
+<button type="button" data-opt="3">Both attention and the feed-forward network</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Attention alone. The FFN is applied position-by-position and never looks sideways — which is exactly why it parallelises perfectly.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="numeric" data-answer="12.6" data-tolerance="0.4" data-placeholder="billions">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Using the rule <code>12 × n_layers × d_model²</code>, estimate the block parameters of a model with 40 layers and <code>d_model = 5120</code>. Give the answer in billions, to one decimal place.</p></div>
+<div class="note text-sm" data-ex-explain hidden>12 × 40 × 5120² = 12 × 40 × 26,214,400 ≈ 1.26 × 10¹⁰, so about 12.6 billion parameters in the blocks, before the embedding table.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why did the field move from post-norm to pre-norm placement?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Pre-norm is cheaper to compute</button>
+<button type="button" data-opt="1">Post-norm normalises the residual path itself, degrading the clean gradient highway and making deep stacks unstable</button>
+<button type="button" data-opt="2">Pre-norm removes the need for learned scale parameters</button>
+<button type="button" data-opt="3">Post-norm is incompatible with RoPE</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Pre-norm keeps the residual path a pure sum from input to output. That stability is what allowed depth to scale past a couple of dozen layers without elaborate warmup schedules.</div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="07-position-how-the-model-knows-word-order.html" data-nav-prev>← 7. Position: how the model knows word order</a>
+      <a class="btn btn-primary" href="09-the-full-forward-pass.html" data-nav-next>9. The full forward pass →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l08.js" defer></script>
+</body>
+</html>

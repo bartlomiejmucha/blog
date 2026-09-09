@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>1. What a language model actually does — LLMs from scratch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l01" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 1 / 18</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part I · Foundations</span>
+      <h1 class="text-4xl leading-tight">1. What a language model actually does</h1>
+      <p class="lead">Strip away the chat interface and an LLM is one function called over and over: given some text, guess what comes next.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>State, precisely, the single prediction task an LLM is trained on</li>
+<li>Explain why a next-token predictor can appear to reason, translate and code</li>
+<li>Trace how one prediction becomes a whole paragraph through autoregression</li>
+<li>Read a probability distribution over next tokens and say what the model believes</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="the-whole-job-description" class="scroll-mt-24 text-2xl">The whole job description</h2>
+<div class="prose-block">
+<p>Start with a sentence with a hole in it:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">The cat sat on the ___</p>
+<p>You would probably write <em>mat</em>, <em>couch</em> or <em>floor</em>. You did not look those words up in a dictionary — you have seen enough English that, after "the", a piece of furniture or a surface is a likely follow-up. That guess is the entire job of a language model. It is, at heart, a very expensive fill-in-the-blank machine.</p>
+<p>Written precisely, the whole task is:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">given tokens t<sub>1</sub> … t<sub>n</sub>, output P(t<sub>n+1</sub> | t<sub>1</sub> … t<sub>n</sub>)</p>
+<p>Do not let the notation intimidate you — you just did this exercise by hand. Read it as: "given everything written so far, produce the chance of each possible next piece." Two words to unpack:</p>
+<ul>
+<li><strong>token</strong> — the "piece" of text the model works with. Often a word or a fragment of one ("under", "standing"); Lesson 2 is entirely about this.</li>
+<li><strong>P(…)</strong> — a <em>probability</em>: a number from 0 to 1 for how likely something is. "Mat" might be 0.30, "couch" 0.12, "banana" 0.000001.</li>
+</ul>
+<p>That is it. Not "answer the question", not "be helpful", not "understand". The model reads the text so far and produces a <strong>probability for every possible next token</strong>. If its vocabulary has 100,000 entries, the output is 100,000 numbers that sum to 1 — one chance per candidate, like odds on every horse in a race. The word for that full list of odds is a <strong>probability distribution</strong>, and you can see one live in the diagram below.</p>
+<p>Everything you have seen an LLM do — write code, summarise a document, argue a position, translate Polish to Japanese — falls out of doing that one fill-in-the-blank job extremely well over an enormous amount of text.</p>
+<p>Why would guessing the next word require anything more than memorised phrases? Because to predict the next word accurately across <em>all</em> of human writing, you are forced to pick up the things that determine the next word. Finish this and you need a fact: "The capital of France is ___". Finish this and you need arithmetic: "2 + 2 = ___". Finish a legal contract or a half-written program and you need to know how contracts and programs are built. The model was never trained to be helpful or correct — only to predict well. But prediction is so demanding that <strong>competence is what the model has to acquire in order to hit it</strong>. That is the whole trick, and it is worth pausing on.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="see-the-distribution" class="scroll-mt-24 text-2xl">See the distribution</h2>
+<div class="prose-block">
+<p>Now see it with your eyes. Below is a small hand-built model over a toy vocabulary — a handful of prefixes, each with its odds over the possible next tokens. Click a prefix and read the bars like this:</p>
+<ul>
+<li>Each bar is <strong>one candidate for the next token</strong> and how likely the model thinks it is. The longest bar is the model's favourite guess.</li>
+<li>The prediction is <strong>never a single word</strong>. It is always the whole ranked, weighted list. The model is always uncertain, and the shape of that uncertainty is meaningful: a chart with one dominant bar means the prefix pinned the answer down; a chart of many similar bars means it did not.</li>
+<li>Compare "The capital of France is" (one bar towers over the rest — almost certainty) with "I went to the" (many plausible bars — genuine open-endedness).</li>
+</ul>
+<p>The number under the chart, "entropy", is just a single score for how spread-out the bars are: low = the model is confident, high = it is guessing broadly. You do not need to compute it here; just notice it drops when the prefix constrains the answer.</p>
+</div>
+<div class="figure" id="viz-predict"><p class="figure-title">Next-token distribution</p><p class="figure-sub">Choose a prefix. The bars are the model's probabilities for the next token.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-generation-loop-one-word-becomes-a-paragraph" class="scroll-mt-24 text-2xl">The generation loop: one word becomes a paragraph</h2>
+<div class="prose-block">
+<p>You now know what happens in <em>one</em> step. But when you ask an LLM something, pages come out. Where does the rest come from? Not from a hidden script — from a loop, run over and over. Watch it happen one word at a time:</p>
+<ol>
+<li>You give it the prompt: <code>The cat sat</code></li>
+<li>It predicts a distribution for the next token, and one token is picked from it: <code> on</code></li>
+<li><strong>The picked token is glued onto the end of the input.</strong> The input is now <code>The cat sat on</code> — and the model treats its own output exactly like your input.</li>
+<li>Predict again, pick again, glue again. Repeat until an "end of text" token comes out or a length limit is hit.</li>
+</ol>
+<p>The technical name is <strong>autoregressive generation</strong> ("auto" + "regressing on itself": it feeds on itself). Press <em>Generate next token</em> below and watch the input grow by one word per click — the highlighted token is the newest one, about to rejoin the input.</p>
+<p>Two consequences follow immediately, and they explain a lot of how LLMs behave in real life.</p>
+<p><strong>The model reads its own output.</strong> When it writes token 40, it is predicting from a sequence that includes tokens 1–39 — including the ones it wrote itself. That is why a model that starts an answer wrongly often keeps going wrongly, and confidently: its own bad first sentence is now evidence about what kind of text this is, and the model dutifully continues in that style. The flip side is the trick that makes LLMs genuinely better at hard questions: "let's think step by step" works because each step the model writes becomes input that makes the next step — and eventually the right answer — easier to predict.</p>
+<p><strong>Cost grows with length.</strong> Every single token costs another pass through the network, over a sequence that keeps getting longer. A 500-word answer is thousands of separate passes, one per token — which is why long answers take proportionally longer to type out. Lesson 11 covers the trick (the KV cache) that keeps this from getting out of hand, and why long chats cost more than short ones.</p>
+</div>
+<div class="figure" id="viz-autoregress"><p class="figure-title">The generation loop</p><p class="figure-sub">Step through generation one token at a time and watch the input grow.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="what-the-model-is-not" class="scroll-mt-24 text-2xl">What the model is not</h2>
+<div class="prose-block">
+<p>You now have a working mental model. Before building on it, remove three wrong ones. Most confusion about LLMs — and most failed attempts to use them well — comes from believing one of these.</p>
+<p><strong>It is not a database.</strong> The model does not look anything up when it answers. Facts, insofar as it has them, are smeared across billions of numbers ("weights") that were slowly adjusted during training — closer to a habit than a filing cabinet. This is why it can be confidently wrong: the goal was never "be correct", it was "produce the plausible-sounding continuation". A fluent falsehood scores just as well on that goal as a true sentence. Ask it about something rare and it will not say "I don't know" — it will keep writing, because continuing well <em>is</em> the job.</p>
+<p><strong>It has no memory between calls.</strong> Every request is a fresh calculation over exactly the text you (or your app) send. When ChatGPT seems to remember what you said ten messages ago, that is not the model remembering — the app quietly re-sends the whole conversation every time, and the model reads it again from scratch. The model itself is stateless: it calculates, answers, and forgets.</p>
+<p><strong>It does not plan ahead — structurally.</strong> The model emits one token at a time, and nothing in the machine reserves a plan for token 50. It has no outline, no intended ending. It behaves <em>as if</em> it plans because representations that predict the next token well also happen to encode where the sentence is heading. But the only thing that ever comes out is the next token, chosen from the current distribution.</p>
+<div class="note note-warn"><p class="text-sm"><strong>A useful mental test:</strong> whenever an LLM does something surprising — impressively good or bafflingly bad — ask "what text was in the context window, and what continuation would be statistically likely after it?" That question explains most surprising behaviour, good and bad.</p></div>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="where-the-numbers-come-from" class="scroll-mt-24 text-2xl">Where the numbers come from</h2>
+<div class="prose-block">
+<p>One question you may reasonably still have: fine, it guesses the next token — but <em>how</em>, physically? There is no dictionary in there. How does a chunk of silicon turn "The cat sat on the" into a list of odds?</p>
+<p>Here is the shape of the answer — an assembly line with four stations. You will build each station yourself over the next eight lessons, so do not try to absorb this now; just see the whole machine once so the lessons have somewhere to fit:</p>
+<ol>
+<li><strong>Tokenizer</strong> — chops your text into tokens (the "pieces" from earlier) and looks each one up in a fixed vocabulary list to get its number: an <em>id</em>. "The cat sat on the" becomes five or six integers. Nothing else in the machine ever sees letters. (Lesson 2)</li>
+<li><strong>Embedding table</strong> — turns each id into a long list of numbers (a <em>vector</em>) that captures how that token behaves — roughly, "what kind of thing is this and where does it usually appear". Meaning becomes direction in a giant space of numbers. (Lesson 3)</li>
+<li><strong>A stack of transformer blocks</strong> — the actual thinking. Each block lets every position in the sequence consult the other positions (that is <em>attention</em> — how the model knows that "it" in a sentence refers to the cat), then does some private number-crunching at each position. The same kind of block repeats 30–100+ times. (Lessons 5–9)</li>
+<li><strong>Output projection + softmax</strong> — after the last block, the numbers at the final position are converted into one probability per vocabulary entry: the bar chart you played with above. (Lesson 9)</li>
+</ol>
+<p>Then the loop from the previous section picks a token, and the whole line runs again. That is the entire machine. Every part of it is just arithmetic on lists of numbers — there is no other machinery hiding inside, no dictionary, no search, no author. If any of the four stations above reads like gibberish, good: that is exactly what Lessons 2–9 are for, and they go one station at a time.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">An LLM is a function from a sequence of tokens to a probability distribution over the next token. Text is generated by sampling from that distribution and feeding the result back in. Everything else in this course is detail about how that function is built and trained.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>An LLM has just been given the prompt <code>The capital of France is</code>. What is its immediate output?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">The string <code> Paris</code></button>
+<button type="button" data-opt="1">A probability for every token in its vocabulary</button>
+<button type="button" data-opt="2">A lookup into a geography database</button>
+<button type="button" data-opt="3">A plan for the rest of the sentence, then the first word</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>The forward pass produces a full distribution — one number per vocabulary entry, summing to 1. Turning that into the single token <code> Paris</code> is a separate sampling step that happens outside the model.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="2">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A chatbot answer comes out 200 words long. How many times did the model run its next-token prediction to produce it?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Once — it computes the whole answer in a single calculation</button>
+<button type="button" data-opt="1">About once per word, so roughly 200 times</button>
+<button type="button" data-opt="2">About once per token, so several hundred times — each new token needs a fresh prediction</button>
+<button type="button" data-opt="3">Exactly twice: once for the question, once for the answer</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>One prediction per generated token — and a word is often several tokens, so a 200-word answer is thousands of passes. Each pass sees everything written before it, including the model's own earlier output.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A model writes an incorrect first sentence in an answer and then keeps building on the error. Which property of generation best explains this?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">The model has a memory of past conversations</button>
+<button type="button" data-opt="1">Its own generated tokens are appended to the input and condition every later prediction</button>
+<button type="button" data-opt="2">The temperature was set too low</button>
+<button type="button" data-opt="3">The tokenizer merged the words incorrectly</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Autoregression feeds output back in as input. After a wrong first sentence, the most likely continuation is one consistent with that wrong sentence. The error is now evidence.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="multi" data-answer="0,2">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which statements about a deployed LLM are true? Select all.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It is stateless between API calls unless the application resends the history</button>
+<button type="button" data-opt="1">It consults a fact database when it needs to recall a date</button>
+<button type="button" data-opt="2">The same prompt can produce different outputs depending on how a token is chosen from the distribution</button>
+<button type="button" data-opt="3">It always outputs the single highest-probability token</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Stateless: yes, conversation history is resent by the app. No database: facts live in the weights. Sampling makes output vary. And greedy decoding (always take the top token) is only one of several strategies — Lesson 10.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="fill" data-answer="autoregression|autoregressive|autoregressive generation|auto-regression" data-placeholder="one word">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">type the term</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What is the one-word name for the loop where the model's output token is appended to its input and the process repeats?</p></div>
+<div class="note text-sm" data-ex-explain hidden>Autoregression — 'regressing on itself'. It is the reason both chain-of-thought prompting and runaway error compounding work the way they do.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="6" data-ex-type="order">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 6</span><span class="text-xs uppercase tracking-wider text-ink-600">put in order</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Put the stages of a single forward pass in order, from raw text to a next-token probability.</p></div>
+<div class="space-y-2" data-ex-order>
+<div data-item="0"><span>Text is split into tokens and mapped to integer ids</span></div>
+<div data-item="1"><span>Each id is looked up in the embedding table to get a vector</span></div>
+<div data-item="2"><span>The vectors pass through a stack of transformer blocks</span></div>
+<div data-item="3"><span>The final vector is projected to vocabulary size and softmaxed into probabilities</span></div>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Tokenize → embed → transformer stack → unembed and softmax. Every lesson in Parts I and II fills in one of these boxes.</div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="../index.html" data-nav-prev>← Course home</a>
+      <a class="btn btn-primary" href="02-tokens-how-text-becomes-numbers.html" data-nav-next>2. Tokens: how text becomes numbers →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l01.js" defer></script>
+</body>
+</html>

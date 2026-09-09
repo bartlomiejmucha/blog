@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>17. Making models cheap: quantization, LoRA, MoE, speculative decoding — LLMs from scratch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l17" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 17 / 18</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part V · Using and extending models</span>
+      <h1 class="text-4xl leading-tight">17. Making models cheap: quantization, LoRA, MoE, speculative decoding</h1>
+      <p class="lead">The techniques that determine whether a model costs $10 or $10,000 per million tokens to serve — and how a 7B model ends up running on a laptop.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Explain quantization, the formats in use, and what it costs in quality</li>
+<li>Explain LoRA's low-rank decomposition and compute its parameter savings</li>
+<li>Explain mixture-of-experts and the distinction between total and active parameters</li>
+<li>Explain speculative decoding and why it is mathematically lossless</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="quantization" class="scroll-mt-24 text-2xl">Quantization</h2>
+<div class="prose-block">
+<p>Weights are trained in 16-bit floats. They do not need to stay there. Quantization stores them in fewer bits, mapping the original range onto a coarse grid.</p>
+<div class="overflow-x-auto"><table>
+<tr><th>Format</th><th>Bytes per parameter</th><th>70B model weights</th><th>Typical quality</th></tr>
+<tr><td>fp16 / bf16</td><td>2</td><td>140 GB</td><td>reference</td></tr>
+<tr><td>int8</td><td>1</td><td>70 GB</td><td>essentially indistinguishable</td></tr>
+<tr><td>int4</td><td>0.5</td><td>35 GB</td><td>small but measurable loss</td></tr>
+</table></div>
+<p>Why this helps so much: from Lesson 11, decode is <strong>memory-bandwidth-bound</strong>. Halving the bytes read per token roughly halves the time per token. You get both a memory saving and a speedup, which is unusual.</p>
+<p>Two approaches. <strong>Post-training quantization</strong> (GPTQ, AWQ) converts an existing model using a small calibration set — minutes to hours, no retraining. <strong>Quantization-aware training</strong> simulates the rounding during training so the model adapts to it; better results, much more expensive.</p>
+<p>The subtlety that makes 4-bit work at all is <strong>outliers</strong>. A small number of activation dimensions have magnitudes far larger than the rest, and naively quantizing them destroys quality. Modern methods handle those channels separately, or quantize in small blocks with per-block scales rather than one scale for a whole tensor.</p>
+</div>
+<div class="figure" id="viz-quant"><p class="figure-title">Rounding to a grid</p><p class="figure-sub">Set the bit width and watch a weight distribution snap to the available levels.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="lora-and-parameter-efficient-fine-tuning" class="scroll-mt-24 text-2xl">LoRA and parameter-efficient fine-tuning</h2>
+<div class="prose-block">
+<p>Full fine-tuning of a 70B model means updating all 70B weights and storing optimizer state for each — hundreds of gigabytes of GPU memory. <strong>Low-Rank Adaptation</strong> avoids nearly all of it.</p>
+<p>The observation: the <em>change</em> a fine-tune makes to a weight matrix is empirically low-rank. So freeze the original <code>W</code> and learn a product of two thin matrices:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">W' = W + BA &nbsp;&nbsp; where B is [d, r], A is [r, d], r ≪ d</p>
+<p>For a 4096×4096 matrix, full fine-tuning trains 16.8M parameters. With rank 8, LoRA trains 2 × 4096 × 8 = 65,536 — about 0.4%. Memory drops accordingly, since optimizer state is only needed for the trainable parameters.</p>
+<p>Practical consequences:</p>
+<ul>
+  <li>Adapters are tiny (megabytes), so you can keep dozens per base model and swap them per request.</li>
+  <li><code>BA</code> can be merged into <code>W</code> after training, giving exactly zero added inference latency.</li>
+  <li><strong>QLoRA</strong> combines a 4-bit frozen base with LoRA adapters trained in higher precision, which is what makes fine-tuning a 70B model on a single GPU possible.</li>
+</ul>
+<p>The limit: LoRA adapts behaviour and style well. It is a poor tool for injecting large amounts of new factual knowledge — retrieval is the right instrument for that.</p>
+</div>
+<div class="figure" id="viz-lora"><p class="figure-title">Low-rank decomposition</p><p class="figure-sub">Set d and r to compare full fine-tuning against LoRA parameter counts.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="mixture-of-experts" class="scroll-mt-24 text-2xl">Mixture of experts</h2>
+<div class="prose-block">
+<p>In a dense model, every parameter participates in every token. MoE breaks that assumption.</p>
+<p>Replace each feed-forward network with <em>N</em> parallel FFNs ("experts") plus a small <strong>router</strong>. For each token, the router picks the top <em>k</em> experts (commonly 2 of 8, or 8 of 256) and only those run. The result is weighted by the router's scores.</p>
+<p>So a model can hold, say, 8× the parameters while doing roughly the same arithmetic per token. This is the <strong>total versus active parameters</strong> distinction: a model advertised as 47B total / 13B active has 47B parameters worth of capacity and 13B parameters worth of per-token compute.</p>
+<p>The costs are real:</p>
+<ul>
+  <li>All experts must be in memory even though only a few run, so VRAM tracks total parameters, not active ones.</li>
+  <li>Routing must be load-balanced or a few experts get all the traffic; an auxiliary balancing loss is standard.</li>
+  <li>Training is less stable, and distributed serving involves substantial cross-device communication.</li>
+</ul>
+<p>MoE is why some very capable models are surprisingly fast: you are paying inference cost for a much smaller model than the parameter count suggests.</p>
+</div>
+<div class="figure" id="viz-moe"><p class="figure-title">Expert routing</p><p class="figure-sub">Send tokens through a router and watch which experts activate, and the load balance across them.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="speculative-decoding" class="scroll-mt-24 text-2xl">Speculative decoding</h2>
+<div class="prose-block">
+<p>Decode is sequential and bandwidth-bound: one token per full read of the weights, with the GPU's arithmetic units mostly idle. Speculative decoding exploits that idle capacity.</p>
+<ol>
+  <li>A small, fast <strong>draft model</strong> generates the next <em>k</em> tokens cheaply — say 5.</li>
+  <li>The large model processes all 5 candidates <strong>in a single forward pass</strong>, in parallel, and computes what it would have predicted at each position.</li>
+  <li>Accept the longest prefix where the draft matches what the large model would have sampled; reject the rest and continue from there.</li>
+</ol>
+<p>The remarkable property, given the right acceptance rule, is that the output distribution is <strong>identical</strong> to running the large model alone. It is not an approximation — it is pure latency optimisation, typically 2–3× on easy text where the draft agrees often.</p>
+<p>It works because verifying 5 tokens costs nearly the same as generating 1: both require reading all the weights once, and the extra arithmetic is free capacity. Variants include Medusa (extra prediction heads instead of a separate draft model) and n-gram lookup drafting for repetitive text.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">Quantization stores weights in fewer bits, cutting memory and speeding up bandwidth-bound decode. LoRA trains small low-rank update matrices instead of full weights. MoE routes each token to a few experts, decoupling capacity from per-token cost. Speculative decoding drafts several tokens cheaply and verifies them in one pass.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="numeric" data-answer="6.5" data-tolerance="0.3" data-placeholder="gigabytes">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A 13-billion-parameter model is quantized from fp16 to int4. How many gigabytes do the weights occupy afterwards? (Use 1 GB = 10⁹ bytes; one decimal place.)</p></div>
+<div class="note text-sm" data-ex-explain hidden>int4 is 0.5 bytes per parameter: 13×10⁹ × 0.5 = 6.5 GB, down from 26 GB at fp16. That is the difference between needing a data-centre GPU and running on a consumer one.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="numeric" data-answer="131" data-tolerance="3" data-placeholder="thousands">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A weight matrix is 4096 × 4096. Using LoRA with rank 16, how many parameters are trained for it? Give the answer in thousands.</p></div>
+<div class="note text-sm" data-ex-explain hidden>2 × 4096 × 16 = 131,072, about 131k — versus 16.8 million for the full matrix. Roughly 0.8%.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A mixture-of-experts model is described as 47B total parameters, 13B active. What does 'active' mean?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Only 13B parameters need to be loaded into memory</button>
+<button type="button" data-opt="1">About 13B parameters participate in the computation for any given token</button>
+<button type="button" data-opt="2">The model was trained on 13B tokens</button>
+<button type="button" data-opt="3">13B parameters are trainable and the rest are frozen</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>All 47B must be resident in memory; the router selects a subset of experts per token so the per-token arithmetic corresponds to about 13B. Capacity and compute are decoupled.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why does speculative decoding not change the model's output distribution?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Because the draft model is trained on the same data</button>
+<button type="button" data-opt="1">Because the large model verifies every drafted token and the acceptance rule preserves its distribution, rejecting anything it would not have produced</button>
+<button type="button" data-opt="2">Because the temperature is set to 0</button>
+<button type="button" data-opt="3">Because both models share the same weights</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>The large model is the arbiter at every position. The speedup comes from verifying several positions in one pass rather than from trusting the draft.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="multi" data-answer="0,1,3">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which statements are true? Select all.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Quantization speeds up decoding partly because decoding is limited by memory bandwidth</button>
+<button type="button" data-opt="1">LoRA adapters can be merged into the base weights, adding no inference latency</button>
+<button type="button" data-opt="2">MoE reduces the memory needed to hold the model</button>
+<button type="button" data-opt="3">QLoRA combines a 4-bit frozen base model with trainable low-rank adapters</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>MoE reduces compute per token, not memory — every expert must still be resident. That is the central trade-off it makes.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="6" data-ex-type="fill" data-answer="router|the router|routing network|gate|gating network" data-placeholder="one word">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 6</span><span class="text-xs uppercase tracking-wider text-ink-600">type the term</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What is the name of the small component in a mixture-of-experts layer that decides which experts each token goes to?</p></div>
+<div class="note text-sm" data-ex-explain hidden>The router (or gating network). Keeping its assignments balanced across experts requires an explicit auxiliary loss during training.</div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="16-rag-tools-and-agents.html" data-nav-prev>← 16. RAG, tools and agents</a>
+      <a class="btn btn-primary" href="18-evaluation-hallucination-and-what-is-still-unsolved.html" data-nav-next>18. Evaluation, hallucination and what is still unsolved →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l17.js" defer></script>
+</body>
+</html>

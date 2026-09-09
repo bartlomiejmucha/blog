@@ -1,0 +1,193 @@
+@import "tailwindcss";
+
+@source "../index.html";
+@source "../lessons/*.html";
+@source "../assets/js/**/*.js";
+@source "../build/*.py";
+
+@theme {
+  --color-ink-950: var(--c-ink-950);
+  --color-ink-900: var(--c-ink-900);
+  --color-ink-850: var(--c-ink-850);
+  --color-ink-800: var(--c-ink-800);
+  --color-ink-700: var(--c-ink-700);
+  --color-ink-600: var(--c-ink-600);
+  --color-ink-400: var(--c-ink-400);
+  --color-ink-300: var(--c-ink-300);
+  --color-ink-100: var(--c-ink-100);
+  --color-accent: var(--c-accent);
+  --color-accent-soft: var(--c-accent-soft);
+  --color-warm: var(--c-warm);
+  --color-good: var(--c-good);
+  --color-bad: var(--c-bad);
+  --color-viz-void: var(--c-viz-void);
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* The actual colour values live here, one level of indirection away from the
+   @theme tokens. That indirection is deliberate: it stops Tailwind baking a
+   literal hex into opacity utilities like bg-ink-900/70, so every utility
+   resolves through the variable and flips with the theme. */
+:root {
+  --c-ink-950: #07090f;
+  --c-ink-900: #0b0f1a;
+  --c-ink-850: #10162a;
+  --c-ink-800: #151d33;
+  --c-ink-700: #223052;
+  --c-ink-600: #35476f;
+  --c-ink-400: #8ea0c4;
+  --c-ink-300: #b9c6de;
+  --c-ink-100: #e8eefb;
+  --c-accent: #6ea8fe;
+  --c-accent-soft: #24365f;
+  --c-warm: #ffb454;
+  --c-good: #52d1a4;
+  --c-bad: #ff7b72;
+  --c-viz-void: #0b0f1a;
+  --page-glow-a: #16224022;
+  --page-glow-b: #2a1c3f22;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+  --c-ink-950: #f6f7fb;
+    --c-ink-900: #ffffff;
+    --c-ink-850: #f0f3f9;
+    --c-ink-800: #e4e9f3;
+    --c-ink-700: #cfd7e7;
+    --c-ink-600: #9aa7c0;
+    --c-ink-400: #55627d;
+    --c-ink-300: #333e56;
+    --c-ink-100: #111827;
+    --c-accent: #2563eb;
+    --c-accent-soft: #dbe6ff;
+    --c-warm: #b45309;
+    --c-good: #0b7a5c;
+    --c-bad: #c2372c;
+    --c-viz-void: #eef1f8;
+    --page-glow-a: #2563eb14;
+    --page-glow-b: #7c3aed12;
+  }
+}
+
+:root[data-theme="light"] {
+  --c-ink-950: #f6f7fb;
+  --c-ink-900: #ffffff;
+  --c-ink-850: #f0f3f9;
+  --c-ink-800: #e4e9f3;
+  --c-ink-700: #cfd7e7;
+  --c-ink-600: #9aa7c0;
+  --c-ink-400: #55627d;
+  --c-ink-300: #333e56;
+  --c-ink-100: #111827;
+  --c-accent: #2563eb;
+  --c-accent-soft: #dbe6ff;
+  --c-warm: #b45309;
+  --c-good: #0b7a5c;
+  --c-bad: #c2372c;
+  --c-viz-void: #eef1f8;
+  --page-glow-a: #2563eb14;
+  --page-glow-b: #7c3aed12;
+}
+
+@layer base {
+  html { scroll-behavior: smooth; }
+  body {
+    @apply bg-ink-950 text-ink-100 font-sans antialiased;
+    background-image:
+      radial-gradient(60rem 40rem at 15% -10%, var(--page-glow-a), transparent),
+      radial-gradient(50rem 30rem at 95% 0%, var(--page-glow-b), transparent);
+    background-attachment: fixed;
+  }
+  h1, h2, h3 { @apply text-ink-100 font-semibold tracking-tight; }
+  p { @apply leading-7; }
+  code { @apply font-mono text-[0.85em]; }
+  ::selection { background: color-mix(in srgb, var(--color-accent) 28%, transparent); }
+}
+
+@layer components {
+  .wrap { @apply mx-auto w-full max-w-4xl px-5; }
+  .wrap-wide { @apply mx-auto w-full max-w-6xl px-5; }
+
+  .card {
+    @apply rounded-2xl border border-ink-700/70 bg-ink-900/70 p-5 shadow-lg shadow-black/30 backdrop-blur;
+  }
+  .card-tight { @apply rounded-xl border border-ink-700/70 bg-ink-900/60 p-4; }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-ink-600
+           bg-ink-800 px-4 py-2 text-sm font-medium text-ink-100 transition
+           hover:border-accent hover:bg-ink-700 active:scale-[0.98]
+           disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-ink-600 disabled:hover:bg-ink-800;
+  }
+  .btn-primary {
+    @apply border-accent/70 bg-accent/20 text-ink-100 hover:bg-accent/30 hover:border-accent;
+  }
+  .btn-ghost { @apply border-transparent bg-transparent text-ink-400 hover:text-ink-100 hover:bg-ink-800; }
+  .btn-sm { @apply px-2.5 py-1 text-xs; }
+
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-ink-700 bg-ink-850 px-3 py-1
+           text-xs font-medium text-ink-300;
+  }
+
+  .lead { @apply text-lg text-ink-300; }
+  .prose-block { @apply space-y-4 text-ink-300; }
+  .prose-block strong { @apply text-ink-100 font-semibold; }
+  .prose-block a { @apply text-accent underline decoration-accent/40 underline-offset-4 hover:decoration-accent; }
+  .prose-block ul { @apply list-disc space-y-2 pl-6 marker:text-ink-600; }
+  .prose-block ol { @apply list-decimal space-y-2 pl-6 marker:text-ink-600; }
+  .prose-block code { @apply rounded bg-ink-800 px-1.5 py-0.5 text-accent; }
+  .prose-block table { @apply w-full border-collapse text-sm; }
+  .prose-block th { @apply border-b border-ink-700 px-3 py-2 text-left font-semibold text-ink-100; }
+  .prose-block td { @apply border-b border-ink-800 px-3 py-2 align-top; }
+
+  .kbd { @apply rounded border border-ink-600 bg-ink-800 px-1.5 py-0.5 font-mono text-xs text-ink-300; }
+
+  .note {
+    @apply rounded-xl border-l-4 border-accent/70 bg-accent-soft/40 px-4 py-3 text-ink-300;
+  }
+  .note-warn { @apply border-warm/70 bg-warm/10; }
+  .note-key { @apply border-good/70 bg-good/10; }
+
+  .figure { @apply rounded-2xl border border-ink-700/70 bg-ink-900/50 p-4; }
+  .figure-title { @apply mb-1 text-sm font-semibold text-ink-100; }
+  .figure-sub { @apply mb-4 text-xs text-ink-400; }
+
+  .slider {
+    @apply h-1.5 w-full cursor-pointer appearance-none rounded-full bg-ink-700 outline-none;
+  }
+  .slider::-webkit-slider-thumb {
+    @apply h-4 w-4 appearance-none rounded-full border-2 border-ink-950 bg-accent;
+  }
+
+  .tok {
+    @apply inline-block rounded border border-ink-600 px-1.5 py-0.5 font-mono text-xs;
+  }
+
+  .opt {
+    @apply flex w-full cursor-pointer items-start gap-3 rounded-xl border border-ink-700 bg-ink-850/60 px-4 py-3
+           text-left text-sm text-ink-300 transition hover:border-ink-600 hover:bg-ink-800;
+  }
+  .opt[data-state="selected"] { @apply border-accent bg-accent/10 text-ink-100; }
+  .opt[data-state="correct"] { @apply border-good bg-good/10 text-ink-100; }
+  .opt[data-state="wrong"] { @apply border-bad bg-bad/10 text-ink-100; }
+  .opt[data-state="missed"] { @apply border-good/50 border-dashed; }
+
+  .field {
+    @apply w-full rounded-lg border border-ink-700 bg-ink-850 px-3 py-2 font-mono text-sm text-ink-100
+           outline-none placeholder:text-ink-600 focus:border-accent;
+  }
+
+  .bar-track { @apply h-2 w-full overflow-hidden rounded-full bg-ink-800; }
+  .bar-fill { @apply h-full rounded-full bg-accent transition-all duration-500; }
+}
+
+/* Light mode needs lighter shadows and a slightly stronger card edge. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .card { @apply shadow-sm shadow-black/5; }
+  :root:not([data-theme="dark"]) .slider::-webkit-slider-thumb { border-color: var(--color-ink-900); }
+}
+:root[data-theme="light"] .card { @apply shadow-sm shadow-black/5; }
+:root[data-theme="light"] .slider::-webkit-slider-thumb { border-color: var(--color-ink-900); }

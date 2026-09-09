@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>LLMs from scratch — a visual course</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="assets/js/course.js" defer></script>
+<script src="assets/js/app.js" defer></script>
+</head>
+<body class="min-h-screen">
+<header class="border-b border-ink-800">
+  <div class="wrap-wide flex items-center justify-between py-4">
+    <span class="font-mono text-sm text-ink-300">LLMs, from first principles</span>
+    <div class="flex items-center gap-3">
+      <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+      <span class="pill font-mono">18 lessons</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap-wide space-y-10 py-12">
+  <section class="space-y-5">
+    <h1 class="text-5xl leading-tight">How large language models actually work</h1>
+    <p class="lead max-w-2xl">A slow, visual, hands-on course. It starts with "what is a token" and ends with mixture-of-experts routing, speculative decoding, and RLHF. Every lesson has interactive diagrams you can poke at and exercises that check your answer.</p>
+    <div class="flex flex-wrap items-center gap-3">
+      <a class="btn btn-primary" data-resume href="lessons/01-what-a-language-model-actually-does.html">Start the course</a>
+      <a class="btn" href="#map">See the full map</a>
+    </div>
+    <div class="card space-y-3">
+      <div class="flex items-center justify-between text-sm">
+        <span class="font-semibold text-ink-100">Your progress</span>
+        <span class="font-mono text-xs text-ink-400" data-course-stat></span>
+      </div>
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+      <div class="flex flex-wrap items-center gap-2 pt-1">
+        <button class="btn btn-sm" data-export>Export progress</button>
+        <label class="btn btn-sm cursor-pointer">Import<input type="file" accept="application/json" class="hidden" data-import></label>
+        <button class="btn btn-sm" data-reset>Reset</button>
+        <span class="text-xs text-ink-600">Saved in this browser's local storage.</span>
+      </div>
+    </div>
+  </section>
+
+  <section id="map" class="scroll-mt-8 space-y-4">
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-lesson-grid></div>
+  </section>
+
+  <section class="card space-y-3">
+    <h2 class="text-xl">How to use this course</h2>
+    <div class="prose-block text-sm">
+      <ul>
+        <li>Go in order. Each lesson assumes the previous one.</li>
+        <li>Play with every diagram before reading past it. Move the sliders, break things, watch what changes.</li>
+        <li>Do the exercises with the text hidden if you can. Retry as often as you like.</li>
+        <li>Mark a lesson read when you finish it. Progress lives in local storage on this device, so use Export if you want to move it.</li>
+        <li>The ◐ button in the header cycles the theme: follow your system, force light, force dark.</li>
+      </ul>
+    </div>
+  </section>
+</main>
+<footer class="border-t border-ink-800 py-8 text-center text-xs text-ink-600">Built as a static site. No tracking, no network calls, everything runs in your browser.</footer>
+</body>
+</html>

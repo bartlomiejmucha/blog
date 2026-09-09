@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>5. Attention: queries, keys and values — LLMs from scratch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l05" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 5 / 18</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part II · The transformer</span>
+      <h1 class="text-4xl leading-tight">5. Attention: queries, keys and values</h1>
+      <p class="lead">The mechanism that made LLMs possible. Each position asks a question, every other position advertises what it has, and information flows where the match is strongest.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Explain the roles of Q, K and V in plain language and in equations</li>
+<li>Trace one attention computation from scores to weights to output</li>
+<li>Say why the scores are divided by √d_k</li>
+<li>Explain causal masking and why decoder models need it</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="the-problem-attention-solves" class="scroll-mt-24 text-2xl">The problem attention solves</h2>
+<div class="prose-block">
+<p>Take the sentence: <em>"The trophy did not fit in the suitcase because it was too big."</em> What does <code>it</code> refer to?</p>
+<p>The trophy. Change one word — <em>"too small"</em> — and it becomes the suitcase. Resolving this requires the representation at the position of <code>it</code> to pull in information from a specific earlier position, chosen based on content, not on fixed distance.</p>
+<p>Older architectures handled this badly. Recurrent networks squeezed the whole past through one fixed-size hidden state, sequentially, so long-range links were both lossy and slow to train. Attention replaced that with direct, content-addressed connections: <strong>every position can read from every earlier position in one step</strong>, and which one it reads from is learned.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="three-projections" class="scroll-mt-24 text-2xl">Three projections</h2>
+<div class="prose-block">
+<p>From the vector <code>x</code> at each position, three learned matrices produce three different vectors:</p>
+<ul>
+  <li><strong>Query</strong> <code>q = W_Q x</code> — "what am I looking for?"</li>
+  <li><strong>Key</strong> <code>k = W_K x</code> — "what do I offer, as an advertisement?"</li>
+  <li><strong>Value</strong> <code>v = W_V x</code> — "what do I actually hand over if you pick me?"</li>
+</ul>
+<p>Those are per-position vectors. Stack the query for every position in the sequence as the rows of one matrix and you have <code>Q</code>, of shape <code>[T, d_k]</code>; the same stacking gives <code>K</code> and <code>V</code>. The capital letters in the equation below are always the whole sequence at once.</p>
+<p>The database analogy is exact enough to be worth stating once: it is a soft lookup. A hard lookup matches one key and returns its value. Attention matches <em>every</em> key to a degree, and returns a blend of all values weighted by how well each matched.</p>
+<p>Keys and values are separate on purpose. The thing that makes a position <em>findable</em> need not be the thing it <em>contributes</em>. A position holding the word <code>Paris</code> might advertise "I am a city name" via its key while contributing "capital, France, European" via its value.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-equation-one-piece-at-a-time" class="scroll-mt-24 text-2xl">The equation, one piece at a time</h2>
+<div class="prose-block">
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 text-center font-mono text-sm text-ink-100">Attention(Q, K, V) = softmax( QKᵀ / √d_k + M ) V</p>
+<p><strong>QKᵀ</strong> — every query dotted with every key, giving a <code>[T, T]</code> score matrix. Entry <code>(i, j)</code> is how relevant position <em>j</em> is to position <em>i</em>. This is the source of the quadratic cost: double the sequence, quadruple the matrix.</p>
+<p><strong>÷ √d_k</strong> — the scaling. Dot products of <code>d_k</code>-dimensional vectors grow in magnitude roughly like <code>√d_k</code>. Without scaling, with <code>d_k = 128</code> the scores are large, the softmax saturates into a near one-hot spike, and its gradients vanish. Dividing by <code>√d_k</code> keeps scores at a scale where the softmax stays soft and trainable. It is a small term with a large effect.</p>
+<p><strong>+ M</strong> — the causal mask. Set every entry where <code>j &gt; i</code> to −∞ so that after the softmax those weights are exactly zero. Position 5 cannot see position 6. Without this the model would trivially cheat during training by reading the answer it is being asked to predict, and would be useless at generation time when the future genuinely does not exist.</p>
+<p><strong>softmax</strong> — turn each row of scores into weights that are positive and sum to 1.</p>
+<p><strong>× V</strong> — the output at position <em>i</em> is the weighted average of all value vectors, using row <em>i</em>'s weights. That result is added back into the residual stream.</p>
+</div>
+<div class="figure" id="viz-attention"><p class="figure-title">Attention weights, live</p><p class="figure-sub">A hand-built attention pattern, shaped like the ones real heads learn — self, previous token, sink, and one semantic link — softmaxed and causally masked.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="reading-an-attention-matrix" class="scroll-mt-24 text-2xl">Reading an attention matrix</h2>
+<div class="prose-block">
+<p>Rows are queries, columns are keys. Row <em>i</em> sums to 1 and shows where position <em>i</em> looked. The upper-right triangle is always blank because of the causal mask.</p>
+<p>Some patterns recur across essentially every trained model, and recognising them is genuinely useful when debugging:</p>
+<ul>
+  <li><strong>The diagonal</strong> — attending to yourself. Very common in early layers.</li>
+  <li><strong>Previous-token heads</strong> — a stripe one step off the diagonal, effectively reconstructing local order.</li>
+  <li><strong>Attention sinks</strong> — a strong column on the very first token. When a head has nothing useful to attend to it still must distribute weight summing to 1, so it dumps it on a neutral position. This is a real phenomenon with practical consequences: evicting the first token from a KV cache degrades quality badly.</li>
+  <li><strong>Induction heads</strong> — the pattern behind in-context learning. Having seen <code>… A B …</code> earlier, on encountering <code>A</code> again the head attends to the token that followed <code>A</code> last time and copies it. This is how a model picks up a format from your examples in the prompt, and we return to it in Lesson 15.</li>
+</ul>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">Attention projects each position into a query, a key and a value. Scores are query·key, scaled by √d_k, masked so no position sees the future, then softmaxed into weights. The output at each position is the weighted sum of the value vectors.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>In attention, what does the <em>key</em> vector at a position represent?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">What that position is looking for in other positions</button>
+<button type="button" data-opt="1">What that position advertises so other positions can decide whether to attend to it</button>
+<button type="button" data-opt="2">The content that gets passed along when the position is attended to</button>
+<button type="button" data-opt="3">The position's index in the sequence</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Query = what I'm looking for. Key = what I advertise. Value = what I hand over. Keys and values are deliberately separate projections.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="2">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why are the attention scores divided by √d_k before the softmax?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">To keep the output values between 0 and 1</button>
+<button type="button" data-opt="1">To make the computation faster on GPUs</button>
+<button type="button" data-opt="2">Because dot products grow with dimension, and large scores saturate the softmax and kill its gradients</button>
+<button type="button" data-opt="3">To normalise for different sequence lengths</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>It is a variance-control trick. Unscaled, high-dimensional dot products produce extreme scores, the softmax collapses to nearly one-hot, and gradient flow through it stops.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="numeric" data-answer="1.0" data-tolerance="0.05" data-placeholder="millions">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A sequence of 1,000 tokens is processed by one attention head. How many entries does the raw QKᵀ score matrix have, in millions?</p></div>
+<div class="note text-sm" data-ex-explain hidden>1000 × 1000 = 1,000,000 entries — one million. At 10,000 tokens it would be 100 million. That quadratic growth is the central cost problem of long context.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What would happen during training if the causal mask were removed from a decoder-only model?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Training would be slower but the model would be more accurate</button>
+<button type="button" data-opt="1">The model could attend to the token it is being asked to predict, learning nothing useful for generation</button>
+<button type="button" data-opt="2">The softmax would no longer sum to 1</button>
+<button type="button" data-opt="3">The attention matrix would become non-square</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>It could read the answer. Training loss would drop beautifully and the model would be worthless at generation time, when future tokens do not exist yet.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="order">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">put in order</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Order the steps of a single attention operation.</p></div>
+<div class="space-y-2" data-ex-order>
+<div data-item="0"><span>Project each position's vector into a query, a key and a value</span></div>
+<div data-item="1"><span>Dot every query with every key to form the score matrix</span></div>
+<div data-item="2"><span>Scale by √d_k and add −∞ to future positions</span></div>
+<div data-item="3"><span>Softmax each row into weights that sum to 1</span></div>
+<div data-item="4"><span>Multiply the weights by the value vectors and sum</span></div>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Project → score → scale and mask → softmax → weighted sum of values. Masking must happen <em>before</em> the softmax, so the zeroed entries do not consume any probability mass.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="6" data-ex-type="multi" data-answer="0,1,3">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 6</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which of these are real, commonly observed attention patterns? Select all.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">A strong column on the first token, used as a dumping ground for unneeded attention</button>
+<button type="button" data-opt="1">Heads that attend to the immediately preceding token</button>
+<button type="button" data-opt="2">Heads that attend to future tokens to check the model's own answer</button>
+<button type="button" data-opt="3">Induction heads that find an earlier occurrence of the current token and copy what followed it</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Attention sinks, previous-token heads and induction heads are all well documented. Attending to future tokens is impossible in a causal model — the mask forbids it.</div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="04-neurons-matrices-and-nonlinearity.html" data-nav-prev>← 4. Neurons, matrices and nonlinearity</a>
+      <a class="btn btn-primary" href="06-multi-head-attention.html" data-nav-next>6. Multi-head attention →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l05.js" defer></script>
+</body>
+</html>

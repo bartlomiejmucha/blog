@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>6. Multi-head attention — LLMs from scratch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l06" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 6 / 18</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part II · The transformer</span>
+      <h1 class="text-4xl leading-tight">6. Multi-head attention</h1>
+      <p class="lead">One attention head can only average one way. Running many in parallel, each in its own small subspace, lets a layer track several relationships at once.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Explain why a single attention head is a bottleneck</li>
+<li>Compute head dimensions from d_model and head count</li>
+<li>Describe how head outputs are recombined</li>
+<li>Explain MQA and GQA and why they exist</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="one-head-is-one-opinion" class="scroll-mt-24 text-2xl">One head is one opinion</h2>
+<div class="prose-block">
+<p>A single attention head produces, per position, one set of weights summing to 1 — one weighted average. But a token in a real sentence needs several things at once. In <em>"The keys to the cabinet are on the table"</em>, the position of <code>are</code> needs the subject <code>keys</code> for agreement, and separately the syntactic structure, and separately the topic. One averaging operation cannot deliver all of that without blurring them into mush.</p>
+<p>The fix is straightforward: run several heads in parallel, each with its own <code>W_Q</code>, <code>W_K</code>, <code>W_V</code>, so each learns to attend on a different criterion.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-dimension-arithmetic" class="scroll-mt-24 text-2xl">The dimension arithmetic</h2>
+<div class="prose-block">
+<p>Crucially, the heads do <strong>not</strong> each get the full width. <code>d_model</code> is divided among them:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">d_head = d_model / n_heads</p>
+<p>With <code>d_model = 4096</code> and 32 heads, each head works in 128 dimensions. Its Q, K and V projections are <code>[128, 4096]</code>, and it produces a 128-dimensional output per position. In code you will rarely see those 32 small matrices: implementations fuse them into one <code>[4096, 4096]</code> projection and slice the result into heads afterwards, which is the form the calculator below prints.</p>
+<p>Then:</p>
+<ol>
+  <li>Concatenate all 32 head outputs → back to 4096 dimensions.</li>
+  <li>Multiply by an output projection <code>W_O</code> of shape <code>[4096, 4096]</code>, which lets the heads' results mix and be rescaled before rejoining the residual stream.</li>
+</ol>
+<p>The total compute is about the same as one full-width head, which is the elegant part: you get many relationship types for free, paid for by giving each less room. That trade-off has a limit — heads that are too narrow cannot represent anything useful — which is why head count scales with model width rather than growing indefinitely.</p>
+</div>
+<div class="figure" id="viz-heads"><p class="figure-title">Splitting d_model across heads</p><p class="figure-sub">Set d_model and head count to see the per-head shapes and parameter counts.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="what-individual-heads-learn" class="scroll-mt-24 text-2xl">What individual heads learn</h2>
+<div class="prose-block">
+<p>Heads are not assigned roles; specialisation emerges from training. Interpretability work has identified recurring types:</p>
+<ul>
+  <li><strong>Positional heads</strong> — attend to the previous token, or to a fixed offset.</li>
+  <li><strong>Syntactic heads</strong> — verbs attending to their subjects, adjectives to their nouns, closing brackets to their opening partners.</li>
+  <li><strong>Coreference heads</strong> — pronouns attending to the entity they refer to.</li>
+  <li><strong>Induction heads</strong> — the copy-the-pattern behaviour introduced in Lesson 5. These reliably appear during training at the same moment as a sharp jump in in-context learning ability.</li>
+  <li><strong>Duplicate-token heads, name-mover heads</strong>, and other narrow circuits found by tracing specific tasks.</li>
+</ul>
+<p>Study the per-head patterns below on the same sentence and notice how different the same layer's heads look.</p>
+</div>
+<div class="figure" id="viz-head-patterns"><p class="figure-title">Four heads, one sentence</p><p class="figure-sub">Each panel is a different simulated head on the same sentence. Hover any cell to see which pair it scores.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="mqa-and-gqa-the-inference-time-fix" class="scroll-mt-24 text-2xl">MQA and GQA: the inference-time fix</h2>
+<div class="prose-block">
+<p>At generation time you cache the keys and values of every past token so you do not recompute them (Lesson 11). That cache is proportional to <code>n_heads × d_head × n_layers × sequence_length</code>, and it becomes the dominant memory cost of serving a model with long context.</p>
+<p>Two variants attack it:</p>
+<ul>
+  <li><strong>Multi-query attention (MQA)</strong> — keep all the query heads, but use a <em>single</em> shared key head and value head. The cache shrinks by a factor of <code>n_heads</code>. Quality degrades a little.</li>
+  <li><strong>Grouped-query attention (GQA)</strong> — the middle ground now used almost everywhere. Group the query heads (say 32 queries into 8 groups); each group shares one key/value pair. A 4× or 8× cache reduction with quality close to full multi-head.</li>
+</ul>
+<p>This is a good example of a pattern you will see repeatedly: an architecture choice driven not by accuracy but by what it costs to <em>serve</em> the model.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">Multi-head attention splits d_model into h independent subspaces, runs attention in each, concatenates the results and passes them through an output projection. Different heads specialise. GQA and MQA shrink the K/V projections to make the inference cache affordable.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="numeric" data-answer="128" data-tolerance="0" data-placeholder="a whole number">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A model has <code>d_model = 2048</code> and 16 attention heads. What is <code>d_head</code>?</p></div>
+<div class="note text-sm" data-ex-explain hidden>2048 / 16 = 128. Each head attends inside its own 128-dimensional subspace, and the 16 outputs concatenate back to 2048.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What is the main reason for using many heads rather than one wide head?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It reduces the total number of parameters</button>
+<button type="button" data-opt="1">One head produces a single weighted average, so it can only track one relationship per position</button>
+<button type="button" data-opt="2">It removes the need for the causal mask</button>
+<button type="button" data-opt="3">Wide heads cannot be parallelised on a GPU</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>It is about representational capacity, not cost — total compute is roughly unchanged. Multiple heads let one layer attend on several independent criteria simultaneously.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Grouped-query attention shares key and value projections across groups of query heads. What problem does that primarily solve?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Training instability in deep models</button>
+<button type="button" data-opt="1">The size of the KV cache during inference</button>
+<button type="button" data-opt="2">The quadratic cost of the attention score matrix</button>
+<button type="button" data-opt="3">Tokenizer mismatch across languages</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>GQA is an inference-memory optimisation. The QKᵀ matrix is still quadratic in sequence length — GQA does nothing about that; it shrinks what you must store per past token.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="multi" data-answer="0,1,3">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which are documented specialisations that emerge in attention heads? Select all.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Heads that attend from a pronoun to its antecedent</button>
+<button type="button" data-opt="1">Heads that match a closing bracket to its opening bracket</button>
+<button type="button" data-opt="2">Heads explicitly programmed by engineers to handle dates</button>
+<button type="button" data-opt="3">Induction heads that copy a continuation seen earlier in the context</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden>Nothing is hand-programmed. Every one of these roles is discovered by the model during training and only identified afterwards by interpretability researchers.</div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="numeric" data-answer="8" data-tolerance="0" data-placeholder="a whole number">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A layer with <code>d_model = 4096</code> uses 32 query heads and GQA with 8 key/value groups. How many key <em>heads</em> are stored per layer?</p></div>
+<div class="note text-sm" data-ex-explain hidden>One key head per group, so 8 — a 4× reduction versus full multi-head, and therefore a 4× smaller KV cache.</div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="05-attention-queries-keys-and-values.html" data-nav-prev>← 5. Attention: queries, keys and values</a>
+      <a class="btn btn-primary" href="07-position-how-the-model-knows-word-order.html" data-nav-next>7. Position: how the model knows word order →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l06.js" defer></script>
+</body>
+</html>
