@@ -114,20 +114,56 @@
     grid.appendChild(el("span", "font-mono text-ink-400 text-lg", "="));
     grid.appendChild(matNode(P, "C  [2×2]", "c"));
 
+    var canHover = !window.matchMedia || window.matchMedia("(hover: hover)").matches;
+    var idleNote = canHover
+      ? "Hover any output cell to see the row and column that produced it."
+      : "Tap any output cell to see the row and column that produced it.";
+    note.textContent = idleNote;
+    var active = null;
+
+    // A cell must carry exactly one border colour. Stacking a highlight class on
+    // top of the default border-ink-700 fails: equal specificity, and the compiled
+    // order lets border-warm win but not border-accent / border-good, so those
+    // highlights were silently overridden. Swap the class instead of adding it.
+    function eachCell(fn) { LC.$$("[data-m]", mm).forEach(fn); }
+
+    function clearHighlight() {
+      eachCell(function (n) {
+        n.classList.remove("border-accent", "border-warm", "border-good");
+        n.classList.add("border-ink-700");
+      });
+      note.textContent = idleNote;
+      active = null;
+    }
+
+    function highlight(cell) {
+      var r = +cell.dataset.r, c = +cell.dataset.c;
+      clearHighlight();
+      eachCell(function (n) {
+        var on = (n.dataset.m === "a" && +n.dataset.r === r) || (n.dataset.m === "b" && +n.dataset.c === c);
+        if (on) { n.classList.remove("border-ink-700"); n.classList.add(n.dataset.m === "a" ? "border-accent" : "border-warm"); }
+      });
+      cell.classList.remove("border-ink-700");
+      cell.classList.add("border-good");
+      var terms = A[r].map(function (v, k) { return v + "×" + B[k][c]; }).join(" + ");
+      note.innerHTML = 'C[' + r + "][" + c + "] = " + terms + " = <span class='text-good font-mono'>" + P[r][c] +
+        "</span> — the dot product of row " + r + " of A with column " + c + " of B.";
+      active = cell;
+    }
+
     LC.$$('[data-m="c"]', mm).forEach(function (cell) {
-      cell.addEventListener("mouseenter", function () {
-        var r = +cell.dataset.r, c = +cell.dataset.c;
-        LC.$$('[data-m="a"]', mm).forEach(function (n) { n.classList.toggle("border-accent", +n.dataset.r === r); });
-        LC.$$('[data-m="b"]', mm).forEach(function (n) { n.classList.toggle("border-warm", +n.dataset.c === c); });
-        cell.classList.add("border-good");
-        var terms = A[r].map(function (v, k) { return v + "×" + B[k][c]; }).join(" + ");
-        note.innerHTML = 'C[' + r + "][" + c + "] = " + terms + " = <span class='text-good font-mono'>" + P[r][c] +
-          "</span> — the dot product of row " + r + " of A with column " + c + " of B.";
+      cell.classList.add("cursor-pointer");
+      cell.tabIndex = 0;
+      // Touch devices get no hover, so a tap toggles the same highlight.
+      cell.addEventListener("click", function () {
+        if (active === cell) clearHighlight(); else highlight(cell);
       });
-      cell.addEventListener("mouseleave", function () {
-        LC.$$("[data-m]", mm).forEach(function (n) { n.classList.remove("border-accent", "border-warm", "border-good"); });
-        note.textContent = "Hover any output cell to see the row and column that produced it.";
-      });
+      cell.addEventListener("focus", function () { highlight(cell); });
+      cell.addEventListener("blur", function () { if (active === cell) clearHighlight(); });
+      if (canHover) {
+        cell.addEventListener("mouseenter", function () { highlight(cell); });
+        cell.addEventListener("mouseleave", function () { if (active === cell) clearHighlight(); });
+      }
     });
   }
 
@@ -140,13 +176,18 @@
       SiLU: function (x) { return x / (1 + Math.exp(-x)); },
       tanh: Math.tanh
     };
-    var W = 300, H = 200, cx = W / 2, cy = H / 2, sc = 30;
-    var wrap = el("div", "flex flex-wrap gap-4");
+    // One SVG per function. 20 px/unit keeps the tallest values (~4 at x = 4)
+    // inside the 100 px half: at 30 px/unit the curve left the top edge at
+    // x ≈ 3.33 and the last part of it was silently cut off.
+    var W = 300, H = 200, cx = W / 2, cy = H / 2, sc = 20;
+    // 2x2 grid so all four plots render the same size (flex-wrap left tanh
+    // alone on row 2, stretched full-width by flex-1).
+    var wrap = el("div", "grid gap-4 sm:grid-cols-2");
     Object.keys(fns).forEach(function (name) {
       var f = fns[name];
       var pts = [];
-      for (var x = -4; x <= 4; x += 0.05) pts.push((cx + x * sc) + "," + (cy - f(x) * sc));
-      var card = el("div", "figure flex-1 min-w-[220px]");
+      for (var x = -4.5; x <= 4.5; x += 0.05) pts.push((cx + x * sc) + "," + (cy - f(x) * sc));
+      var card = el("div", "figure");
       card.innerHTML = '<p class="figure-title">' + name + "</p>" +
         '<svg viewBox="0 0 ' + W + " " + H + '" class="w-full">' +
         '<line x1="0" y1="' + cy + '" x2="' + W + '" y2="' + cy + '" stroke="' + C.grid + '"/>' +

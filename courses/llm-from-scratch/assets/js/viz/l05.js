@@ -72,7 +72,12 @@
         td.style.opacity = (focus === -1 || focus === i) ? 1 : 0.25;
         td.title = words[i] + " → " + words[j] + " : " + (v * 100).toFixed(1) + "%";
         if (j > i) td.style.border = "1px dashed " + C.grid;
-        (function (i) { td.addEventListener("mouseenter", function () { if (focus !== i) { focus = i; draw(); } }); })(i);
+        // Touch devices get no hover, so a tap selects the row too.
+        (function (i) {
+          function pick() { if (focus !== i) { focus = i; draw(); } }
+          td.addEventListener("mouseenter", pick);
+          td.addEventListener("click", pick);
+        })(i);
       }
     }
     grid.innerHTML = "";
@@ -86,7 +91,7 @@
         row.map(function (r) { return '<span class="font-mono text-ink-100">' + r[0] + "</span> " + (r[1] * 100).toFixed(0) + "%"; }).join(", ") +
         ". Row sums to 1. The dashed cells are masked — those positions are in the future.";
     } else {
-      info.textContent = "Rows are queries, columns are keys. Hover a row. The upper-right triangle is masked out by the causal mask.";
+      info.textContent = "Rows are queries, columns are keys. Hover or tap a row. The upper-right triangle is masked out by the causal mask.";
     }
   }
 
