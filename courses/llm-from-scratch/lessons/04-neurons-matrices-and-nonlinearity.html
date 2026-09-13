@@ -250,8 +250,8 @@
 </div>
 <div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="numeric" data-answer="8.4" data-tolerance="0.2" data-placeholder="millions">
 <div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
-<div class="prose-block text-sm" data-ex-prompt><p>A feed-forward block with <code>d_model = 1024</code> and a 4× hidden width has two weight matrices and no biases. How many parameters is that, in millions? (Answer to one decimal place.)</p></div>
-<div class="note text-sm" data-ex-explain hidden>Hidden width is 4096. W_up is 4096×1024 = 4,194,304 and W_down is 1024×4096 = another 4,194,304. Total ≈ 8.4 million, per layer.</div>
+<div class="prose-block text-sm" data-ex-prompt><p>A feed-forward block takes vectors of <code>d_model = 1024</code> numbers, expands them to a middle layer 4× wider (4 × 1024 = 4096 neurons), and contracts back. It has two weight matrices and no biases. How many parameters is that, in millions? (Answer to one decimal place.)</p></div>
+<div class="note text-sm" data-ex-explain hidden>The middle layer is 4096 wide. W_up is 4096×1024 = 4,194,304 and W_down is 1024×4096 = another 4,194,304. Total ≈ 8.4 million, per layer.</div>
 </div>
 <div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="multi" data-answer="0,1,3">
 <div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
