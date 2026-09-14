@@ -63,7 +63,7 @@
 <section class="space-y-4">
 <h2 id="three-projections" class="scroll-mt-24 text-2xl">Three projections</h2>
 <div class="prose-block">
-<p>From the vector <code>x</code> at each position, three learned matrices produce three different vectors:</p>
+<p>From the vector <code>x</code> at each position — the residual-stream vector for that token, carried forward from the embedding and updated by any earlier blocks — three learned matrices produce three different vectors. Three separate learned weight matrices do this — one per projection, each trained independently so the three outputs can specialize: <code>W_Q</code> only ever produces queries, <code>W_K</code> only ever produces keys, <code>W_V</code> only ever produces values.</p>
 <ul>
   <li><strong>Query</strong> <code>q = W_Q x</code> — "what am I looking for?"</li>
   <li><strong>Key</strong> <code>k = W_K x</code> — "what do I offer, as an advertisement?"</li>
