@@ -536,13 +536,13 @@ LESSONS.append(dict(
 <p>Older architectures handled this badly. Recurrent networks squeezed the whole past through one fixed-size hidden state, sequentially, so long-range links were both lossy and slow to train. Attention replaced that with direct, content-addressed connections: <strong>every position can read from every earlier position in one step</strong>, and which one it reads from is learned.</p>
 """),
         dict(title="Three projections", body="""
-<p>From the vector <code>x</code> at each position, three learned matrices produce three different vectors:</p>
+<p>From the vector <code>x</code> at each position — the residual-stream vector for that token, carried forward from the embedding and updated by any earlier blocks — three separate learned weight matrices produce three different vectors, one per projection, each trained independently so the outputs can specialize: <code>W_Q</code> only ever produces queries, <code>W_K</code> only ever produces keys, <code>W_V</code> only ever produces values.</p>
 <ul>
   <li><strong>Query</strong> <code>q = W_Q x</code> — "what am I looking for?"</li>
   <li><strong>Key</strong> <code>k = W_K x</code> — "what do I offer, as an advertisement?"</li>
   <li><strong>Value</strong> <code>v = W_V x</code> — "what do I actually hand over if you pick me?"</li>
 </ul>
-<p>Those are per-position vectors. Stack the query for every position in the sequence as the rows of one matrix and you have <code>Q</code>, of shape <code>[T, d_k]</code>; the same stacking gives <code>K</code> and <code>V</code>. The capital letters in the equation below are always the whole sequence at once.</p>
+<p>Those are per-position vectors. Stack the query for every position in the sequence as the rows of one matrix and you have <code>Q</code>, of shape <code>[T, d_k]</code> (<code>T</code> = sequence length, <code>d_k</code> = the size of each query/key vector); the same stacking gives <code>K</code> and <code>V</code>. The capital letters in the equation below are always the whole sequence at once.</p>
 <p>The database analogy is exact enough to be worth stating once: it is a soft lookup. A hard lookup matches one key and returns its value. Attention matches <em>every</em> key to a degree, and returns a blend of all values weighted by how well each matched.</p>
 <p>Keys and values are separate on purpose. The thing that makes a position <em>findable</em> need not be the thing it <em>contributes</em>. A position holding the word <code>Paris</code> might advertise "I am a city name" via its key while contributing "capital, France, European" via its value.</p>
 """),
