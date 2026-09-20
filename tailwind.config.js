@@ -7,6 +7,10 @@ module.exports = {
     './_layouts/**/*.html',
     './_includes/**/*.html',
     './assets/js/**/*.js',
+    // The content branch (blog@pages) is a sibling checkout and also uses
+    // Tailwind classes in its pages. Scanned when present, ignored otherwise.
+    '../blog@pages/*.md',
+    '../blog@pages/_includes/*.md',
   ],
   theme: {
     extend: {
