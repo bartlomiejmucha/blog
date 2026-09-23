@@ -216,7 +216,7 @@ LESSONS.append(dict(
   <li>Power laws describe the range where they were fitted. They are not a guarantee about regions nobody has measured.</li>
 </ul>
 """, figure=fig("viz-scaling", "The scaling curve",
-                "Move along the compute axis and see loss on both linear and log-log axes.")),
+                "The same loss curve on linear and log-log axes.")),
         dict(title="Chinchilla: the correction", body="""
 <p>The 2020 work suggested spending most additional compute on parameters. The field did: GPT-3 was 175B parameters trained on 300B tokens.</p>
 <p>In 2022, DeepMind's Chinchilla paper redid the experiments more carefully — varying model size <em>and</em> data together at fixed compute budgets — and found this was badly wrong. The result: for compute-optimal training, <strong>parameters and tokens should scale in roughly equal proportion</strong>, around 20 tokens per parameter.</p>

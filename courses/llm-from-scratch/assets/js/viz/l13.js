@@ -13,21 +13,31 @@
     box.appendChild(svgw); box.appendChild(note);
     s.appendChild(box);
 
+    // Loss falls toward the irreducible 1.7. Only the reducible part, L - 1.7,
+    // is a pure power law, so that is what the log-log panel plots.
     var lin = [], log = [];
+    var x0 = 30, pw = W / 2 - 50, top = 30, bot = H - 25, ph = bot - top;
     for (var e = 18; e <= 26; e += 0.05) {
       var flops = Math.pow(10, e), l = L(flops);   // not C: that is the shared palette
-      var x = 30 + (e - 18) / 8 * (W / 2 - 50);
-      lin.push(x + "," + (H - 25 - (4.2 - l) / 2.6 * (H - 50)));
-      log.push((W / 2 + 30 + (e - 18) / 8 * (W / 2 - 50)) + "," + (H - 25 - (Math.log(4.2) - Math.log(l)) / 0.9 * (H - 50)));
+      var x = x0 + (e - 18) / 8 * pw;
+      lin.push(x + "," + (top + (3.0 - l) / 1.0 * ph));
+      log.push((W / 2 + x) + "," + (top + (Math.log10(1.3) - Math.log10(l - 1.7)) / (Math.log10(1.3) - Math.log10(0.4)) * ph));
     }
+    var ticks = "";
+    [0, W / 2].forEach(function (off) {
+      [18, 22, 26].forEach(function (e) {
+        ticks += '<text x="' + (off + x0 + (e - 18) / 8 * pw) + '" y="' + (bot + 14) + '" font-size="9" text-anchor="middle" fill="' + C.muted + '" font-family="monospace">1e' + e + '</text>';
+      });
+    });
     svgw.innerHTML = '<svg viewBox="0 0 ' + W + " " + H + '" class="w-full">' +
       '<polyline points="' + lin.join(" ") + '" fill="none" stroke="' + C.accent + '" stroke-width="2"/>' +
       '<polyline points="' + log.join(" ") + '" fill="none" stroke="' + C.good + '" stroke-width="2"/>' +
-      '<text x="30" y="16" font-size="10" fill="' + C.accent + '" font-family="monospace">loss vs log(compute)</text>' +
-      '<text x="' + (W / 2 + 30) + '" y="16" font-size="10" fill="' + C.good + '" font-family="monospace">log(loss) vs log(compute) — a straight line</text>' +
-      '<line x1="20" y1="' + (H - 25) + '" x2="' + (W / 2 - 10) + '" y2="' + (H - 25) + '" stroke="' + C.grid + '"/>' +
-      '<line x1="' + (W / 2 + 20) + '" y1="' + (H - 25) + '" x2="' + (W - 10) + '" y2="' + (H - 25) + '" stroke="' + C.grid + '"/></svg>';
-    note.textContent = "The same data on two axes. The straight line on log-log axes is what 'power law' means, and it is what makes the loss of a much larger run predictable in advance.";
+      '<text x="' + x0 + '" y="16" font-size="10" fill="' + C.accent + '" font-family="monospace">loss vs log(compute)</text>' +
+      '<text x="' + (W / 2 + x0) + '" y="16" font-size="10" fill="' + C.good + '" font-family="monospace">log(loss − 1.7) vs log(compute)</text>' +
+      '<line x1="20" y1="' + bot + '" x2="' + (W / 2 - 10) + '" y2="' + bot + '" stroke="' + C.grid + '"/>' +
+      '<line x1="' + (W / 2 + 20) + '" y1="' + bot + '" x2="' + (W - 10) + '" y2="' + bot + '" stroke="' + C.grid + '"/>' +
+      ticks + '</svg>';
+    note.textContent = "Loss = 1.7 + 12·C^−0.055, with compute C in FLOPs. Left: loss falls fast, then flattens toward the irreducible 1.7. Right: subtract that floor and take logs, and the rest is a straight line. That is what 'power law' means, and it is what makes the loss of a much larger run predictable in advance.";
   }
 
   var ch = document.getElementById("viz-chinchilla");
