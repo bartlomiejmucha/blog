@@ -58,7 +58,7 @@
 <p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">loss = −log P(actual next token)</p>
 <p>That is the whole thing. If the model gave the correct token probability 0.9, the loss is 0.105. If it gave it 0.1, the loss is 2.3. If it gave it 0.001, the loss is 6.9. The penalty grows sharply as the assigned probability approaches zero, which is exactly the incentive you want: <strong>being confidently wrong is punished far more than being uncertain</strong>.</p>
 <p>Average this over every position in the batch and you have a number to descend.</p>
-<p><strong>Perplexity</strong> is <code>exp(loss)</code>, and it has a nice reading: "the model is as confused as if it were choosing uniformly among this many options". Loss 2.3 means perplexity 10 — effectively a 10-way guess at each token. Good models on English land around loss 1.8–2.2.</p>
+<p><strong>Perplexity</strong> is <code>exp(loss)</code>, and it has a nice reading: "the model is as confused as if it were choosing uniformly among this many options". Loss 2.3 means perplexity 10 — effectively a 10-way guess at each token. Large models on general web text reach roughly 1.5–2.5, depending on the tokenizer and the data. That is an average over easy tokens (the second half of a word) and genuinely unpredictable ones (the first word of a new sentence), so a loss of 2 does not mean every token is a 7-way guess.</p>
 </div>
 <div class="figure" id="viz-loss"><p class="figure-title">Loss versus assigned probability</p><p class="figure-sub">Drag the probability the model assigned to the correct token and watch the loss curve.</p></div>
 </section>
@@ -80,7 +80,7 @@
 <div class="prose-block">
 <ul>
   <li><strong>Batching.</strong> Gradients from a single sequence are noisy, so you average over many. Large models use batches of millions of tokens, assembled across thousands of GPUs.</li>
-  <li><strong>Learning rate schedule.</strong> Almost universally: linear <em>warmup</em> over the first few thousand steps (large steps on random weights destabilise training), then <em>cosine decay</em> toward near zero. The decay matters — models improve substantially in the final phase as the steps get small.</li>
+  <li><strong>Learning rate schedule.</strong> Most commonly: linear <em>warmup</em> over the first few thousand steps (large steps on random weights destabilise training), then <em>cosine decay</em> toward near zero. Some recent runs instead hold the rate flat and decay only at the end. The decay matters — models improve substantially in the final phase as the steps get small.</li>
   <li><strong>Gradient clipping.</strong> Cap the gradient norm to survive occasional bad batches that would otherwise blow the weights apart.</li>
   <li><strong>Mixed precision.</strong> Compute in bf16 for speed, keep a master copy of the weights in fp32 for numerical stability.</li>
   <li><strong>Checkpointing.</strong> Runs last weeks to months across thousands of GPUs; hardware fails routinely, so state is saved constantly and runs resume from the last checkpoint.</li>
@@ -94,8 +94,8 @@
 <div class="prose-block">
 <p>Pretraining corpora are on the order of trillions of tokens: filtered web crawl (the bulk), books, code repositories, Wikipedia, academic papers, curated Q&amp;A.</p>
 <p>Filtering is not a footnote — it is one of the highest-leverage parts of the whole process. Standard steps include quality classification (does this read like a reference document?), deduplication (near-duplicates cause memorisation and waste compute), removing machine-generated spam, language identification, toxicity and PII filtering, and <strong>decontamination</strong>: removing text that overlaps evaluation benchmarks, without which your reported scores measure memorisation rather than ability.</p>
-<p>Data <em>mixture</em> matters too, and in non-obvious ways. Including a substantial fraction of code improves performance on reasoning tasks that have nothing to do with programming — a well-replicated result usually explained by code's strict, explicit logical structure.</p>
-<p>Cost, for scale: a frontier pretraining run is thousands of GPUs for months, tens of millions of dollars, and a single unrecoverable failure can waste weeks. This is why pretraining happens rarely and fine-tuning happens constantly.</p>
+<p>Data <em>mixture</em> matters too, and in non-obvious ways. Including a substantial fraction of code improves performance on reasoning tasks that have nothing to do with programming — a widely reported result, usually explained by code's strict, explicit logical structure.</p>
+<p>Cost, for scale: a frontier pretraining run is thousands to tens of thousands of GPUs for months, tens to hundreds of millions of dollars, and a single unrecoverable failure can waste weeks. This is why pretraining happens rarely and fine-tuning happens constantly.</p>
 </div>
 </section>
 

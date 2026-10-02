@@ -43,8 +43,8 @@
         "<p class='text-ink-100'>loss = −log(" + p.toFixed(2) + ") = " + loss.toFixed(3) + "</p>" +
         "<p class='text-ink-400'>perplexity = e^loss = " + Math.exp(loss).toFixed(2) + "</p>";
       note.textContent = p > 0.8 ? "Confident and right: almost no gradient signal, nothing much to learn here."
-        : p > 0.3 ? "Typical territory for a well-trained model on ordinary text."
-          : "Confidently wrong. The loss climbs steeply as the assigned probability approaches zero — this is where the largest updates come from.";
+        : p > 0.1 ? "Ordinary territory. A well-trained model's average loss of about 2 corresponds to roughly 0.14 on the correct token, because so much of text is genuinely unpredictable."
+          : "The correct token got very little probability. The loss climbs steeply as it approaches zero — this is where the largest updates come from.";
     }
     inp.addEventListener("input", function () { p = parseFloat(inp.value); draw(); });
     draw();
