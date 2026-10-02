@@ -8,7 +8,7 @@
     var box = el("div", "space-y-3");
     var ta = document.createElement("textarea");
     ta.className = "field h-20 leading-6";
-    ta.value = "low low low low low lower lower newest newest newest widest widest";
+    ta.value = "low low low lower";
     var ctrls = el("div", "flex flex-wrap gap-2");
     var stepB = el("button", "btn btn-sm btn-primary", "Run one merge");
     var run5 = el("button", "btn btn-sm", "Run 5 merges");
@@ -24,7 +24,8 @@
     function init() {
       words = {};
       ta.value.trim().split(/\s+/).forEach(function (w) {
-        var key = w.split("").join(" ") + " </w>";
+        // The end-of-word marker rides on the last character, as in the lesson.
+        var key = w.split("").join(" ") + "</w>";
         words[key] = (words[key] || 0) + 1;
       });
       merges = [];
@@ -167,10 +168,10 @@
     var b2 = el("div", "space-y-3");
     var input = document.createElement("textarea");
     input.className = "field h-24 leading-6";
-    input.value = "strawberry  strawberry";
+    input.value = "strawberry strawberry";
     var presets = el("div", "flex flex-wrap gap-2");
-    [["leading space", "strawberry  strawberry"],
-     ["dog vs  dog", "dog dog"],
+    [["leading space", "strawberry strawberry"],
+     ["dog vs ␣dog", "dog dog"],
      ["trailing space", "The answer is "],
      ["numbers", "The total was 1234 in 2024."],
      ["code", "def add(a, b):\n    return a + b"],

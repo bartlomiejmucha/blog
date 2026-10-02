@@ -15,7 +15,7 @@ window.COURSE = {
       "title": "Tokens: how text becomes numbers",
       "file": "02-tokens-how-text-becomes-numbers.html",
       "part": "Part I \u00b7 Foundations",
-      "blurb": "The model never sees letters or words. Before any thinking happens, prompt is chopped into pieces and each piece is replaced by an integer ids from a fixed vocabulary built by a compression algorithm \u2014 and that detail explains a surprising number of LLM quirks.",
+      "blurb": "The model never sees letters or words. Before any thinking happens, your prompt is chopped into pieces and each piece is replaced by an integer id from a fixed vocabulary built by a compression algorithm \u2014 and that detail explains a surprising number of LLM quirks.",
       "exercises": 5
     },
     {
