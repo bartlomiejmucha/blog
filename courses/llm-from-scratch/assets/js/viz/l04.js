@@ -146,8 +146,8 @@
       cell.classList.remove("border-ink-700");
       cell.classList.add("border-good");
       var terms = A[r].map(function (v, k) { return v + "×" + B[k][c]; }).join(" + ");
-      note.innerHTML = 'C[' + r + "][" + c + "] = " + terms + " = <span class='text-good font-mono'>" + P[r][c] +
-        "</span> — the dot product of row " + r + " of A with column " + c + " of B.";
+      note.innerHTML = "Row " + (r + 1) + ", column " + (c + 1) + " of C = " + terms + " = <span class='text-good font-mono'>" + P[r][c] +
+        "</span> — the dot product of row " + (r + 1) + " of A with column " + (c + 1) + " of B.";
       active = cell;
     }
 
