@@ -63,7 +63,7 @@
 </table></div>
 <p>Why this helps so much: from Lesson 11, decode is <strong>memory-bandwidth-bound</strong>. Halving the bytes read per token roughly halves the time per token. You get both a memory saving and a speedup, which is unusual.</p>
 <p>Two approaches. <strong>Post-training quantization</strong> (GPTQ, AWQ) converts an existing model using a small calibration set — minutes to hours, no retraining. <strong>Quantization-aware training</strong> simulates the rounding during training so the model adapts to it; better results, much more expensive.</p>
-<p>The subtlety that makes 4-bit work at all is <strong>outliers</strong>. A small number of activation dimensions have magnitudes far larger than the rest, and naively quantizing them destroys quality. Modern methods handle those channels separately, or quantize in small blocks with per-block scales rather than one scale for a whole tensor.</p>
+<p>The subtlety that makes 4-bit work at all is <strong>outliers</strong>. A small number of values — certain activation channels especially, and some weights — have magnitudes far larger than the rest, and naively quantizing them destroys quality. Modern methods handle those channels separately, or quantize in small blocks with per-block scales rather than one scale for a whole tensor.</p>
 </div>
 <div class="figure" id="viz-quant"><p class="figure-title">Rounding to a grid</p><p class="figure-sub">Set the bit width and watch a weight distribution snap to the available levels.</p></div>
 </section>
@@ -91,7 +91,7 @@
 <div class="prose-block">
 <p>In a dense model, every parameter participates in every token. MoE breaks that assumption.</p>
 <p>Replace each feed-forward network with <em>N</em> parallel FFNs ("experts") plus a small <strong>router</strong>. For each token, the router picks the top <em>k</em> experts (commonly 2 of 8, or 8 of 256) and only those run. The result is weighted by the router's scores.</p>
-<p>So a model can hold, say, 8× the parameters while doing roughly the same arithmetic per token. This is the <strong>total versus active parameters</strong> distinction: a model advertised as 47B total / 13B active has 47B parameters worth of capacity and 13B parameters worth of per-token compute.</p>
+<p>So a model can hold several times the parameters while doing the per-token arithmetic of a much smaller one. This is the <strong>total versus active parameters</strong> distinction: a model advertised as 47B total / 13B active has 47B parameters worth of capacity and 13B parameters worth of per-token compute.</p>
 <p>The costs are real:</p>
 <ul>
   <li>All experts must be in memory even though only a few run, so VRAM tracks total parameters, not active ones.</li>
@@ -110,7 +110,7 @@
 <ol>
   <li>A small, fast <strong>draft model</strong> generates the next <em>k</em> tokens cheaply — say 5.</li>
   <li>The large model processes all 5 candidates <strong>in a single forward pass</strong>, in parallel, and computes what it would have predicted at each position.</li>
-  <li>Accept the longest prefix where the draft matches what the large model would have sampled; reject the rest and continue from there.</li>
+  <li>Accept the longest prefix where the draft matches what the large model would have sampled; reject the rest. At the first rejected position the large model's own prediction is already computed, so it is kept too — every pass yields at least one token, and up to 6.</li>
 </ol>
 <p>The remarkable property, given the right acceptance rule, is that the output distribution is <strong>identical</strong> to running the large model alone. It is not an approximation — it is pure latency optimisation, typically 2–3× on easy text where the draft agrees often.</p>
 <p>It works because verifying 5 tokens costs nearly the same as generating 1: both require reading all the weights once, and the extra arithmetic is free capacity. Variants include Medusa (extra prediction heads instead of a separate draft model) and n-gram lookup drafting for repetitive text.</p>
