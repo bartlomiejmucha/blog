@@ -215,7 +215,7 @@ x = x + FFN(Norm(x))
                 "Follow a vector through both sub-layers. Toggle the residual connections off to see what breaks.")),
         dict(title="Residual connections", body="""
 <p>The <code>x +</code> is easy to overlook and is doing two crucial jobs.</p>
-<p><strong>Gradient flow.</strong> In a plain deep stack, the gradient is multiplied by each layer's Jacobian on the way back; over 96 layers those factors compound and the signal explodes or vanishes. A residual connection gives the gradient an identity path — an additive route straight from the loss to the earliest layers. Without it, models this deep would not train at all.</p>
+<p><strong>Gradient flow.</strong> Training (Lesson 12) works by sending a correction signal, the <em>gradient</em>, backwards from the output through every layer, telling each weight which way to move. In a plain deep stack that signal is multiplied by a factor at every layer on the way back; over 96 layers those factors compound and the signal explodes or vanishes. A residual connection gives the gradient an identity path — an additive route straight from the output to the earliest layers. Without it, models this deep are practically untrainable.</p>
 <p><strong>The residual stream as a channel.</strong> The more modern reading: the vector flowing through the model is a shared communication bus. Every sub-layer <em>reads</em> from it (through its projection matrices) and <em>writes</em> to it (by adding). An early layer can deposit a piece of information that a layer 40 blocks later retrieves, without any intervening layer needing to preserve it deliberately.</p>
 <p>This picture also explains a practical fact: because everything is added into one stream, features occupy directions in that space, and different circuits communicate by writing to and reading from different directions.</p>
 """),
@@ -229,7 +229,7 @@ x = x + FFN(Norm(x))
 </ul>
 <p>One consequence of pre-norm: the residual stream itself is never normalised on its way through, so its magnitude grows steadily with depth — visible in the figure below. Every pre-norm model therefore ends with a final norm after the last block, before the output projection. It is not an optional extra; without it the unbounded stream hits the output projection directly.</p>
 """, figure=fig("viz-norm", "Pre-norm vs post-norm",
-                "Simulated activation magnitude through a deep stack under both placements.")),
+                "Illustrative size of the residual stream through a deep stack under both placements.")),
         dict(title="Counting the parameters", body="""
 <p>For one block with <code>d = d_model</code> and a 4× FFN, ignoring biases and norm parameters:</p>
 <div class="overflow-x-auto"><table>

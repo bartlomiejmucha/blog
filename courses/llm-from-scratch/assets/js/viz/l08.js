@@ -61,10 +61,11 @@
       var pts = [], mag = 1;
       for (var l = 0; l <= 48; l++) {
         pts.push([l, mag]);
-        // Pre-norm: steady additive growth down an untouched residual path.
-        // Post-norm: multiplicative, so the swings compound with depth.
+        // Pre-norm: every block adds to an untouched residual path, so it grows.
+        // Post-norm: the stream is renormalised after every block, so it stays
+        // near 1. Its instability is in the gradients, not in this magnitude.
         mag = pre ? mag + 0.12 + Math.sin(l) * 0.02
-                  : mag * (1 + 0.085 + Math.sin(l * 1.7) * 0.42);
+                  : 1 + Math.sin(l * 1.7) * 0.05;
         mag = Math.max(0.05, Math.min(mag, 14));
       }
       return pts;
@@ -78,11 +79,11 @@
       '<line x1="20" y1="' + (H - 20) + '" x2="' + (W - 20) + '" y2="' + (H - 20) + '" stroke="' + C.grid + '"/>' +
       '<line x1="20" y1="10" x2="20" y2="' + (H - 20) + '" stroke="' + C.grid + '"/>' +
       path(series(true), C.good) + path(series(false), C.bad) +
-      '<text x="30" y="24" font-size="11" fill="' + C.good + '" font-family="monospace">pre-norm: smooth, controlled growth</text>' +
-      '<text x="30" y="40" font-size="11" fill="' + C.bad + '" font-family="monospace">post-norm: erratic, prone to divergence</text>' +
+      '<text x="30" y="24" font-size="11" fill="' + C.good + '" font-family="monospace">pre-norm: grows with depth, needs a final norm</text>' +
+      '<text x="30" y="40" font-size="11" fill="' + C.bad + '" font-family="monospace">post-norm: renormalised to ~1 after every block</text>' +
       "</svg>";
     wrap.appendChild(el("p", "text-xs text-ink-400",
-      "Illustrative activation magnitude versus layer depth. Pre-norm keeps a clean additive residual path so magnitude grows predictably; post-norm normalises the path itself, and deep stacks become unstable without careful warmup."));
+      "Illustrative residual-stream size versus layer depth. Pre-norm never normalises the stream itself, so each block's addition makes it grow — hence the final norm before the output. Post-norm keeps the stream at a fixed size by normalising it after every block; the cost is that every layer's gradient also has to pass through those norms, which is what makes deep post-norm stacks unstable without careful warmup."));
     nm.appendChild(wrap);
   }
 })();
