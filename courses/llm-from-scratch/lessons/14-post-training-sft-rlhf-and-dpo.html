@@ -78,7 +78,7 @@
 <ol>
   <li><strong>Collect comparisons.</strong> Sample two responses to the same prompt; a human labels which is better. Repeat for tens or hundreds of thousands of prompts.</li>
   <li><strong>Train a reward model.</strong> A separate network (often initialised from the LLM) learns to output a scalar score, trained so that preferred responses score higher. It is a learned, automatable stand-in for human judgement.</li>
-  <li><strong>Optimise the policy.</strong> Use reinforcement learning — PPO — to update the LLM to produce responses the reward model scores highly, with a KL-divergence penalty that punishes drifting too far from the SFT model.</li>
+  <li><strong>Optimise the policy</strong> (reinforcement learning's name for the model being trained). Use reinforcement learning — PPO — to update the LLM to produce responses the reward model scores highly, with a KL-divergence penalty that punishes drifting too far from the SFT model.</li>
 </ol>
 <p>That KL penalty is essential. Without it the policy finds adversarial nonsense that the reward model happens to love — classic <strong>reward hacking</strong>. The reward model is an approximation of human preference, and any optimiser pushed hard enough will find where the approximation breaks.</p>
 </div>
@@ -93,7 +93,7 @@
 <p>Other things that live in post-training:</p>
 <ul>
   <li><strong>Constitutional AI / RLAIF</strong> — a model critiques and revises its own outputs against a written set of principles, replacing much of the human labelling.</li>
-  <li><strong>RLVR</strong> — reinforcement learning from <em>verifiable</em> rewards: for maths and code you can check the answer automatically, giving a clean, unhackable reward signal. This is the engine behind current reasoning models.</li>
+  <li><strong>RLVR</strong> — reinforcement learning from <em>verifiable</em> rewards: for maths and code you can check the answer automatically, giving a reward signal that is much harder to game than a learned reward model — though not impossible: models trained against unit tests have learned to special-case the tests instead of fixing the code. This is the engine behind current reasoning models.</li>
   <li><strong>Reasoning training</strong> — rewarding long chains of thought that reach verified-correct answers, which produces models that spend far more tokens thinking before answering.</li>
 </ul>
 <div class="note note-warn"><p class="text-sm"><strong>The alignment tax.</strong> Post-training can reduce raw capability and diversity: models become more cautious, more formulaic, and sometimes over-refuse. It also produces sycophancy, because human raters prefer agreement — an incentive built directly into the objective. There is a genuine trade-off here, not just an engineering bug.</p></div>
