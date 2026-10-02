@@ -5,14 +5,14 @@
   var f = document.getElementById("viz-forward");
   if (f) {
     var STAGES = [
-      { n: "raw text", s: '"The capital of France"', d: "4 words of a string." },
-      { n: "token ids", s: "[791, 6864, 315, 9822]", d: "Shape [4]. The tokenizer's output — the model sees only these integers." },
-      { n: "embeddings", s: "[4, 4096]", d: "Each id becomes a 4096-dimensional vector by table lookup." },
-      { n: "after block 1", s: "[4, 4096]", d: "Attention has mixed information between positions; the FFN has transformed each one." },
-      { n: "after block 16", s: "[4, 4096]", d: "Mid-stack: syntax resolved, entities tracked, facts being retrieved." },
-      { n: "after block 32", s: "[4, 4096]", d: "Late layers have shifted from 'what is being said' toward 'what token comes next'." },
-      { n: "final norm", s: "[4, 4096]", d: "One last normalisation before the output projection." },
-      { n: "logits", s: "[4, 128000]", d: "One unnormalised score per vocabulary entry, at every position." },
+      { n: "raw text", s: '"The capital of France is"', d: "5 words of a string — the prompt from Lesson 1." },
+      { n: "token ids", s: "[791, 6864, 315, 9822, 374]", d: "Shape [5]. The tokenizer's output — the model sees only these integers." },
+      { n: "embeddings", s: "[5, 4096]", d: "Each id becomes a 4096-dimensional vector by table lookup." },
+      { n: "after block 1", s: "[5, 4096]", d: "Attention has mixed information between positions; the FFN has transformed each one." },
+      { n: "after block 16", s: "[5, 4096]", d: "Mid-stack: syntax resolved, entities tracked, facts being retrieved." },
+      { n: "after block 32", s: "[5, 4096]", d: "Late layers have shifted from 'what is being said' toward 'what token comes next'." },
+      { n: "final norm", s: "[5, 4096]", d: "One last normalisation before the output projection." },
+      { n: "logits", s: "[5, 128000]", d: "One unnormalised score per vocabulary entry, at every position." },
       { n: "softmax(last row)", s: "[128000] → ' Paris' 0.86", d: "Only the last position matters for generating the next token. The rest are discarded." }
     ];
     var i = 0;
