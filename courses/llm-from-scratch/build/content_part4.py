@@ -130,7 +130,7 @@ LESSONS.append(dict(
 <p>The tutorial version — fixed 512-token chunks, top-5 cosine similarity — underperforms badly on real corpora. The standard remedies:</p>
 <ul>
   <li><strong>Chunking.</strong> Fixed-size splits cut sentences and separate a claim from its qualifier. Split on structure (headings, paragraphs), overlap chunks, and prepend document/section titles to each chunk so it carries its own context.</li>
-  <li><strong>Hybrid search.</strong> Embeddings capture meaning but miss exact strings — error codes, product SKUs, surnames. Combine dense vectors with keyword search (BM25) and fuse the rankings. This is usually the single biggest quality win.</li>
+  <li><strong>Hybrid search.</strong> Embeddings capture meaning but miss exact strings — error codes, product SKUs, surnames. Combine dense vectors with keyword search (BM25) and fuse the rankings. Together with reranking, this is usually among the biggest quality wins.</li>
   <li><strong>Reranking.</strong> Retrieve 50 candidates cheaply, then score each against the query with a cross-encoder that reads both together. Far more accurate than comparing two independently computed vectors.</li>
   <li><strong>Query rewriting.</strong> "What about the second one?" is unretrievable. Rewrite follow-ups into standalone queries using the conversation history.</li>
   <li><strong>Order in the prompt.</strong> Given the lost-in-the-middle effect, put the strongest chunks at the beginning and end.</li>
@@ -153,7 +153,7 @@ LESSONS.append(dict(
 <p>An agent is the tool-calling loop run repeatedly toward a goal: observe, decide, act, observe the result, repeat until done or out of budget.</p>
 <p>The characteristic failure modes are worth memorising, because they are all structural rather than incidental:</p>
 <ul>
-  <li><strong>Compounding error.</strong> At 95% reliability per step, a 20-step task succeeds about 36% of the time. Long autonomous chains need either much higher per-step reliability or verification between steps.</li>
+  <li><strong>Compounding error.</strong> At 95% reliability per step, a 20-step task succeeds about 36% of the time — assuming each error is independent and goes uncorrected. Long autonomous chains need either much higher per-step reliability or verification between steps.</li>
   <li><strong>Context growth.</strong> Every observation is appended. Long runs fill the window, get slow and expensive, and start losing early information.</li>
   <li><strong>Loops.</strong> Retrying the same failing action indefinitely. Needs explicit step budgets and loop detection.</li>
   <li><strong>Injection via tool results.</strong> Retrieved pages and API responses enter the context as text. A hostile web page can carry instructions. Everything from Lesson 15 applies here with higher stakes, because the model now has the ability to act.</li>
@@ -178,7 +178,7 @@ LESSONS.append(dict(
                       "Use a larger language model",
                       "Increase the chunk size"],
              answer="1",
-             explain="Dense embeddings encode meaning and are weak on exact rare strings. Hybrid dense + BM25 retrieval is the standard fix and usually the largest single quality improvement."),
+             explain="Dense embeddings encode meaning and are weak on exact rare strings. Hybrid dense + BM25 retrieval is the standard fix for exactly this case."),
         dict(type="mcq",
              prompt="<p>When a model 'calls a tool', what does the model itself actually produce?</p>",
              options=["A direct network request to the API",
