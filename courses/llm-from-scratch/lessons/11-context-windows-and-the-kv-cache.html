@@ -72,7 +72,7 @@
 <ul>
   <li>Decoding one token at a time uses a tiny fraction of a GPU's arithmetic capability. The hardware is mostly idle, waiting on memory.</li>
   <li>The weights are not the only thing read each step — the attention at every layer reads the whole KV cache too. That is why decoding slows down as a conversation grows: at 8k tokens the cache in the example below is 21.5 GB against 140 GB of weights, but at 128k it is 344 GB and has become the larger of the two reads.</li>
-  <li><strong>Batching is nearly free during decode.</strong> The weights are read once and shared across all sequences in the batch, so serving 32 users costs barely more time per step than serving one. This is why batch throughput is the metric providers optimise.</li>
+  <li><strong>Batching is nearly free during decode</strong> — while the caches are small. The weights are read once and shared across all sequences in the batch, so serving 32 users with short contexts costs barely more time per step than serving one. Each user's KV cache is still read separately, so with long contexts the saving shrinks. This is why batch throughput is the metric providers optimise.</li>
   <li>Making weights smaller — quantization, Lesson 17 — speeds up decode almost linearly, because the bottleneck is bytes moved, not maths done.</li>
   <li>Output tokens are typically priced higher than input tokens, and this is why: input is processed in parallel, output is strictly sequential.</li>
 </ul>
@@ -94,11 +94,11 @@
 <section class="space-y-4">
 <h2 id="what-running-out-of-context-means" class="scroll-mt-24 text-2xl">What 'running out of context' means</h2>
 <div class="prose-block">
-<p>The context window is the maximum number of tokens in a single forward pass — prompt plus generated output together. Hitting it means one of three things happened:</p>
+<p>The context window is the maximum number of tokens in a single forward pass — prompt plus generated output together. The limit exists for one of three reasons:</p>
 <ul>
-  <li>The position encoding runs past what the model was trained on (Lesson 7).</li>
-  <li>The KV cache no longer fits in memory.</li>
-  <li>The provider set a limit for cost reasons.</li>
+  <li>Beyond it, the position encoding runs past what the model was trained on (Lesson 7).</li>
+  <li>Beyond it, the KV cache no longer fits in memory.</li>
+  <li>The provider capped it for cost reasons.</li>
 </ul>
 <p>Practical strategies when you exceed it: sliding-window attention (each token only attends to the last N, keeping cost linear but genuinely losing distant information); summarising older conversation turns; retrieval instead of stuffing (Lesson 16); or the <strong>attention sink</strong> trick, keeping the first few tokens permanently in the cache alongside a sliding window, which preserves quality far better than a naive window.</p>
 <div class="note"><p class="text-sm"><strong>Longer context is not free accuracy.</strong> Beyond cost, models attend less reliably to the middle of very long inputs. If a document is 100k tokens and only 2k are relevant, retrieving those 2k usually beats sending everything — cheaper and often more accurate.</p></div>

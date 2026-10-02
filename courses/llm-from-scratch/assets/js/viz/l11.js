@@ -17,36 +17,44 @@
     box.appendChild(row); box.appendChild(stats); box.appendChild(ctr); box.appendChild(note);
     c.appendChild(box);
 
-    function work() {
-      // Positions whose K/V were computed by the step that produced the most
-      // recent token. Without the cache that pass re-ran over everything that
-      // existed before it, i.e. the prompt plus the tokens already generated.
-      return cacheOn ? 1 : promptLen + gen - 1;
+    // Step k produces generated token k. Step 1 is the prefill: one pass over
+    // the whole prompt. After that, with the cache, a step only processes the
+    // token produced by the previous step; without it, every step re-runs
+    // everything that exists so far.
+    function work(k) {
+      if (k === 1) return promptLen;
+      return cacheOn ? 1 : promptLen + k - 1;
     }
     function totalWork() {
-      var t = promptLen; // prefill
-      for (var i = 0; i < gen; i++) t += cacheOn ? 1 : promptLen + i;
+      var t = 0;
+      for (var k = 1; k <= gen; k++) t += work(k);
       return t;
     }
     function draw() {
       row.innerHTML = "";
+      var processed = gen ? promptLen + gen - 1 : 0;   // positions run through the model so far
       for (var i = 0; i < promptLen + gen; i++) {
-        var isNew = i === promptLen + gen - 1 && gen > 0;
-        var cached = cacheOn && !isNew;
-        var t = el("span", "tok " + (isNew ? "border-accent bg-accent/25 text-ink-100"
-          : cached ? "border-good/50 bg-good/10 text-good" : "border-warm/50 bg-warm/10 text-warm"),
-          (i < promptLen ? "p" : "g") + i);
-        t.title = cached ? "K/V read from cache" : "K/V computed this step";
+        var isNew = gen > 0 && i === promptLen + gen - 1;
+        var thisStep = !isNew && i < processed && (gen === 1 || !cacheOn || i === processed - 1);
+        var cls, tip;
+        if (isNew) { cls = "border-accent bg-accent/25 text-ink-100"; tip = "Just produced. Its K/V are computed on the next step."; }
+        else if (thisStep) { cls = "border-warm/50 bg-warm/10 text-warm"; tip = "K/V computed this step"; }
+        else if (i < processed) { cls = "border-good/50 bg-good/10 text-good"; tip = "K/V read from cache"; }
+        else { cls = "border-ink-700 text-ink-400"; tip = "Not processed yet"; }
+        var t = el("span", "tok " + cls, (i < promptLen ? "p" : "g") + i);
+        t.title = tip;
         row.appendChild(t);
       }
       stats.innerHTML =
         "<p class='text-ink-400'>tokens generated: <span class='text-ink-100'>" + gen + "</span></p>" +
-        "<p class='text-ink-400'>positions processed this step: <span class='" + (cacheOn ? "text-good" : "text-bad") + "'>" + (gen ? work() : promptLen) + "</span></p>" +
+        "<p class='text-ink-400'>positions processed this step: <span class='" + (cacheOn || gen < 2 ? "text-good" : "text-bad") + "'>" + (gen ? work(gen) : 0) + "</span>" + (gen === 1 ? " (prefill)" : "") + "</p>" +
         "<p class='text-ink-400'>cumulative position-passes: <span class='text-ink-100'>" + totalWork() + "</span></p>" +
-        "<p class='text-ink-400'>cache entries held: <span class='text-accent'>" + (cacheOn ? promptLen + gen : 0) + "</span></p>";
-      note.textContent = cacheOn
-        ? "Green = K/V reused from cache. Each new token costs one position's worth of work, plus attention against the whole cache."
-        : "Cache off: every step recomputes every position from scratch. Cumulative work grows quadratically — compare the number above with the cache on.";
+        "<p class='text-ink-400'>cache entries held: <span class='text-accent'>" + (cacheOn ? processed : 0) + "</span></p>";
+      note.textContent = gen === 0
+        ? "Press Generate. The first step is the prefill: the whole prompt in one pass, which produces the first token."
+        : cacheOn
+          ? "Orange = K/V computed this step, green = reused from cache. After the prefill, each new token costs one position's worth of work, plus attention against the whole cache."
+          : "Cache off: every step recomputes every position from scratch. Cumulative work grows quadratically — compare the number above with the cache on.";
     }
     step.addEventListener("click", function () { gen++; draw(); });
     reset.addEventListener("click", function () { gen = 0; draw(); });
