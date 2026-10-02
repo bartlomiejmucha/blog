@@ -86,7 +86,7 @@
   <li><strong>Induction heads</strong> — the copy-the-pattern behaviour introduced in Lesson 5. These reliably appear during training at the same moment as a sharp jump in in-context learning ability.</li>
   <li><strong>Duplicate-token heads, name-mover heads</strong>, and other narrow circuits found by tracing specific tasks.</li>
 </ul>
-<p>Study the per-head patterns below on the same sentence and notice how different the same layer's heads look.</p>
+<p>Study the per-head patterns below on the same sentence and notice how different the same layer's heads look. The sentence is a classic from interpretability research: <em>"When Mary and John went to the store, John gave a drink to"</em> — the next word should be <code>Mary</code>, and the last panel shows the head that fetches her name: at the final <code>to</code>, it looks back to the name that was <em>not</em> repeated.</p>
 </div>
 <div class="figure" id="viz-head-patterns"><p class="figure-title">Four heads, one sentence</p><p class="figure-sub">Each panel is a different simulated head on the same sentence. Hover any cell to see which pair it scores.</p></div>
 </section>
@@ -94,7 +94,7 @@
 <section class="space-y-4">
 <h2 id="mqa-and-gqa-the-inference-time-fix" class="scroll-mt-24 text-2xl">MQA and GQA: the inference-time fix</h2>
 <div class="prose-block">
-<p>At generation time you cache the keys and values of every past token so you do not recompute them (Lesson 11). That cache is proportional to <code>n_heads × d_head × n_layers × sequence_length</code>, and it becomes the dominant memory cost of serving a model with long context.</p>
+<p>At generation time you cache the keys and values of every past token so you do not recompute them (Lesson 11). That cache is proportional to <code>2 × n_kv_heads × d_head × n_layers × sequence_length</code> (the 2 is one key and one value; <code>n_kv_heads</code> is the number of key/value heads, which so far has equalled the number of query heads), and it becomes the dominant memory cost of serving a model with long context.</p>
 <p>Two variants attack it:</p>
 <ul>
   <li><strong>Multi-query attention (MQA)</strong> — keep all the query heads, but use a <em>single</em> shared key head and value head. The cache shrinks by a factor of <code>n_heads</code>. Quality degrades a little.</li>

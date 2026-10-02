@@ -89,7 +89,7 @@
       { name: "Head 11 — duplicate token", f: function (i, j) { return words[j] === words[i] && j < i ? 4 : (j === i ? 1 : 0.1); } },
       // Gated on the final position: "to" also occurs at "went to the store",
       // and firing there would not be name-mover behaviour.
-      { name: "Head 14 — induction / name mover", f: function (i, j) { return (i === n - 1 && words[j] === "Mary") ? 4 : (j === i - 1 ? 1 : 0.2); } }
+      { name: "Head 14 — name mover", f: function (i, j) { return (i === n - 1 && words[j] === "Mary") ? 4 : (j === i - 1 ? 1 : 0.2); } }
     ];
     var wrap = el("div", "grid gap-4 sm:grid-cols-2");
     HEADS.forEach(function (H) {
