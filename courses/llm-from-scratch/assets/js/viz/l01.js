@@ -29,23 +29,26 @@
       bars.innerHTML = "";
       var dist = MODEL[current];
       var max = dist[0][1];
+      var rest = 1 - dist.reduce(function (a, d) { return a + d[1]; }, 0);
+      var rows = dist.concat([["all others", rest]]);
       var H = 0;
-      dist.forEach(function (d) { H -= d[1] * Math.log2(d[1]); });
-      dist.forEach(function (d) {
+      rows.forEach(function (d) { if (d[1] > 0) H -= d[1] * Math.log2(d[1]); });
+      rows.forEach(function (d, j) {
+        var other = j === dist.length;
         var row = el("div", "flex items-center gap-3");
         var lab = el("code", "w-28 shrink-0 truncate rounded bg-ink-800 px-1.5 py-0.5 text-right text-xs text-ink-100",
-          d[0].replace(/ /g, "␣"));
+          other ? d[0] : d[0].replace(/ /g, "␣"));
         var track = el("div", "h-5 flex-1 overflow-hidden rounded bg-ink-800");
         var fill = el("div", "h-full rounded transition-all duration-500");
-        fill.style.width = (d[1] / max * 100) + "%";
-        fill.style.background = V.heat(d[1] / max);
+        fill.style.width = (d[1] * 100) + "%";
+        fill.style.background = V.heat(other ? 0.2 : d[1] / max);
         track.appendChild(fill);
         var num = el("span", "w-14 shrink-0 text-right font-mono text-xs text-ink-400", (d[1] * 100).toFixed(1) + "%");
         row.appendChild(lab); row.appendChild(track); row.appendChild(num);
         bars.appendChild(row);
       });
-      entropy.textContent = "Shown: top " + dist.length + " of a ~100,000-token vocabulary. Entropy of these ≈ " +
-        H.toFixed(2) + " bits — lower means the model is more certain.";
+      entropy.textContent = "Shown: top " + dist.length + " of a ~100,000-token vocabulary; the other ~99,990 share the \"all others\" bar. " +
+        "All bars sum to 100%. Entropy ≈ " + H.toFixed(2) + " bits (counting \"all others\" as one option) — lower means the model is more certain.";
     }
 
     keys.forEach(function (k) {
@@ -65,7 +68,8 @@
   /* ---- autoregression stepper ---- */
   var ar = document.getElementById("viz-autoregress");
   if (ar) {
-    var SEQ = [" The", " cat", " sat", " on", " the", " mat", " and", " fell", " asleep", "."];
+    var PROMPT = ["The", " cat", " sat"];
+    var SEQ = [" on", " the", " mat", " and", " fell", " asleep", ".", "<|endoftext|>"];
     var i = 0;
     var box = el("div", "space-y-3");
     var stream = el("div", "flex min-h-[3.5rem] flex-wrap items-start gap-1.5 rounded-lg border border-ink-700 bg-ink-850 p-3");
@@ -80,8 +84,9 @@
 
     function drawAR() {
       stream.innerHTML = "";
-      var pr = el("span", "tok border-ink-600 bg-ink-800 text-ink-400", "[prompt]");
-      stream.appendChild(pr);
+      PROMPT.forEach(function (p) {
+        stream.appendChild(el("span", "tok border-ink-600 bg-ink-800 text-ink-400", p.replace(/ /g, "␣")));
+      });
       for (var k = 0; k < i; k++) {
         var t = el("span", "tok " + (k === i - 1 ? "border-accent bg-accent/20 text-ink-100" : "border-ink-700 text-ink-300"),
           SEQ[k].replace(/ /g, "␣"));
@@ -93,7 +98,9 @@
       }
       info.textContent = i === 0
         ? "Step 0 — the model has only the prompt. One forward pass gives a distribution; we sample from it."
-        : "Step " + i + " — forward pass #" + i + " ran over " + (i + 1) + " positions. The token just produced is now part of the input for step " + (i + 1) + ".";
+        : i >= SEQ.length
+        ? "Step " + i + " — forward pass #" + i + " ran over " + (PROMPT.length + i - 1) + " tokens and produced <|endoftext|>, so generation stops."
+        : "Step " + i + " — forward pass #" + i + " ran over " + (PROMPT.length + i - 1) + " tokens and produced \"" + SEQ[i - 1] + "\". It is now part of the input for pass #" + (i + 1) + ".";
       step.disabled = i >= SEQ.length;
       step.textContent = i >= SEQ.length ? "Hit end-of-text" : "Generate next token";
     }
