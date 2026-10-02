@@ -172,6 +172,7 @@ def lesson_page(L, prev, nxt):
       {next}
     </nav>
     <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
   </main>
 
   <aside class="hidden lg:block">
@@ -216,6 +217,7 @@ INDEX = """<!doctype html>
       <a class="btn btn-primary" data-resume href="lessons/{first}">Start the course</a>
       <a class="btn" href="#map">See the full map</a>
     </div>
+    <div class="note"><p class="text-sm"><strong>AI-generated content.</strong> The lessons, diagrams and exercises in this course were generated with AI. They have been reviewed, but may still contain mistakes — check anything important against primary sources.</p></div>
     <div class="card space-y-3">
       <div class="flex items-center justify-between text-sm">
         <span class="font-semibold text-ink-100">Your progress</span>
