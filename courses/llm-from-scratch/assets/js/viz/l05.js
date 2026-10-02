@@ -7,7 +7,9 @@
 
   var SENTENCES = {
     "The trophy did not fit in the suitcase because it was too big":
-      { it: ["trophy"], was: ["it"], big: ["trophy", "was"] },
+      // At "it" the deciding word has not arrived, so both candidates draw weight;
+      // "big" is where the link to "trophy" can actually be made.
+      { it: ["trophy", "suitcase"], was: ["it"], big: ["trophy", "it"] },
     "The keys to the cabinet are on the table":
       { are: ["keys"], on: ["are"], table: ["the", "on"] },
     "Alice gave Bob a book because she owed him one":
