@@ -228,7 +228,7 @@ LESSONS.append(dict(
 <p>Training compute in FLOPs is well approximated by:</p>
 <p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">C ≈ 6 × N × D</p>
 <p>where <code>N</code> is parameters and <code>D</code> is training tokens. The 6 breaks down as roughly 2 FLOPs per parameter for the forward pass and 4 for the backward pass.</p>
-<p>Worked example — a 7B model on 2T tokens: <code>6 × 7×10⁹ × 2×10¹² = 8.4×10²²</code> FLOPs. On 1000 H100s delivering roughly 160 teraFLOPs each after realistic utilisation losses, that is about 6,000 GPU-days, or a week of wall-clock time. The estimator below works the same arithmetic for any size you pick.</p>
+<p>Worked example — a 7B model on 2T tokens: <code>6 × 7×10⁹ × 2×10¹² = 8.4×10²²</code> FLOPs. An H100 peaks at roughly 1,000 teraFLOPs in bf16; real training runs keep about 40% of that busy, so call it 400 teraFLOPs each. That is about 2,400 GPU-days — two and a half days of wall-clock time on 1,000 H100s. The estimator below works the same arithmetic for any size you pick.</p>
 <p>The corresponding inference rule is <code>2N</code> FLOPs per generated token — forward pass only, no backward pass.</p>
 """, figure=fig("viz-flops", "Compute estimator",
                 "Set parameters and tokens; see FLOPs, rough GPU-days, and an order-of-magnitude cost.")),

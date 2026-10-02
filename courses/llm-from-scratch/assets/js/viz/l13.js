@@ -108,7 +108,7 @@
 
     function draw3() {
       var C = 6 * N * 1e9 * D * 1e9;
-      var gpuFlops = 4e14 * 0.4; // H100 bf16 with realistic MFU
+      var gpuFlops = 989e12 * 0.4; // H100 dense bf16 peak at 40% utilisation
       var gpuSeconds = C / gpuFlops;
       var gpuDays = gpuSeconds / 86400;
       var cost = gpuDays * 24 * 2.5;
