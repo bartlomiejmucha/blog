@@ -16,11 +16,11 @@ LESSONS.append(dict(
         "Explain why CoT works in terms of computation per token",
         "Apply the prompt structure that reliably works, and know the failure modes",
     ],
-    recap="In-context learning is pattern completion executed by attention circuits — induction heads copy structure from earlier in the context. Chain of thought works because each generated token is another forward pass, so writing intermediate steps buys more computation and puts the results in the context where later steps can attend to them.",
+    recap="In-context learning is pattern completion executed by attention circuits — induction heads, the best-understood of them, copy structure from earlier in the context. Chain of thought works because each generated token is another forward pass, so writing intermediate steps buys more computation and puts the results in the context where later steps can attend to them.",
     sections=[
         dict(title="Learning without training", body="""
 <p>Put three examples of a task in the prompt and the model does the fourth correctly. No weights changed. This is <strong>in-context learning</strong>, and it was not designed — it emerged from scale.</p>
-<p>Mechanically it is pattern completion, and Lesson 5's induction heads are the core circuit. Having seen <code>… A B …</code> earlier in the context, when the model encounters <code>A</code> again a head attends to the token that followed <code>A</code> before and promotes <code>B</code>. Generalise from tokens to structure and you get: "the pattern so far is <em>input → output</em>, so continue that pattern."</p>
+<p>Mechanically it is pattern completion, and Lesson 5's induction heads are the best-understood circuit behind it (not the only one). Having seen <code>… A B …</code> earlier in the context, when the model encounters <code>A</code> again a head attends to the token that followed <code>A</code> before and promotes <code>B</code>. Generalise from tokens to structure and you get: "the pattern so far is <em>input → output</em>, so continue that pattern."</p>
 <p>This is why several things are true:</p>
 <ul>
   <li><strong>Format consistency matters more than you expect.</strong> The model is copying structure, so keep separators, capitalisation and ordering identical across examples.</li>
@@ -42,7 +42,7 @@ LESSONS.append(dict(
 <p>Empirically robust, in rough order of impact:</p>
 <ol>
   <li><strong>Be specific about the output.</strong> "Return a JSON array of objects with keys <code>name</code> and <code>year</code>" beats "list them nicely" every time.</li>
-  <li><strong>Put instructions before the data</strong> and separate them clearly with delimiters. Long data followed by an instruction is a weaker structure.</li>
+  <li><strong>Separate instructions from data</strong> with clear delimiters. For long inputs, state the task before the data and repeat the key question after it — the middle of a long context is where instructions get lost.</li>
   <li><strong>Give a role or context</strong> when the register matters. It conditions the distribution toward the right kind of text.</li>
   <li><strong>Show, don't tell</strong> for anything with a format. Two examples usually beat a paragraph of description.</li>
   <li><strong>Ask for reasoning before the answer</strong>, never after. Reasoning generated after the answer cannot influence it — the answer tokens were already emitted.</li>
@@ -92,7 +92,7 @@ LESSONS.append(dict(
              answer="1",
              explain="There is no architectural separation between trusted and untrusted text. Training raises the bar; the mitigation that works is system design — least privilege and confirmation for consequential actions."),
         dict(type="fill",
-             prompt="<p>What is the name of the attention circuit that finds an earlier occurrence of the current token and copies whatever followed it — the mechanism underlying in-context learning?</p>",
+             prompt="<p>What is the name of the attention circuit that finds an earlier occurrence of the current token and copies whatever followed it — a key mechanism behind in-context learning?</p>",
              answer=["induction head", "induction heads", "induction"],
              placeholder="two words",
              explain="Induction heads. Their appearance during training coincides with a sharp, measurable jump in in-context learning ability."),

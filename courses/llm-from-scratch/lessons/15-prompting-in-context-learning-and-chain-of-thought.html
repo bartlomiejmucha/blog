@@ -55,7 +55,7 @@
 <h2 id="learning-without-training" class="scroll-mt-24 text-2xl">Learning without training</h2>
 <div class="prose-block">
 <p>Put three examples of a task in the prompt and the model does the fourth correctly. No weights changed. This is <strong>in-context learning</strong>, and it was not designed — it emerged from scale.</p>
-<p>Mechanically it is pattern completion, and Lesson 5's induction heads are the core circuit. Having seen <code>… A B …</code> earlier in the context, when the model encounters <code>A</code> again a head attends to the token that followed <code>A</code> before and promotes <code>B</code>. Generalise from tokens to structure and you get: "the pattern so far is <em>input → output</em>, so continue that pattern."</p>
+<p>Mechanically it is pattern completion, and Lesson 5's induction heads are the best-understood circuit behind it (not the only one). Having seen <code>… A B …</code> earlier in the context, when the model encounters <code>A</code> again a head attends to the token that followed <code>A</code> before and promotes <code>B</code>. Generalise from tokens to structure and you get: "the pattern so far is <em>input → output</em>, so continue that pattern."</p>
 <p>This is why several things are true:</p>
 <ul>
   <li><strong>Format consistency matters more than you expect.</strong> The model is copying structure, so keep separators, capitalisation and ordering identical across examples.</li>
@@ -85,7 +85,7 @@
 <p>Empirically robust, in rough order of impact:</p>
 <ol>
   <li><strong>Be specific about the output.</strong> "Return a JSON array of objects with keys <code>name</code> and <code>year</code>" beats "list them nicely" every time.</li>
-  <li><strong>Put instructions before the data</strong> and separate them clearly with delimiters. Long data followed by an instruction is a weaker structure.</li>
+  <li><strong>Separate instructions from data</strong> with clear delimiters. For long inputs, state the task before the data and repeat the key question after it — the middle of a long context is where instructions get lost.</li>
   <li><strong>Give a role or context</strong> when the register matters. It conditions the distribution toward the right kind of text.</li>
   <li><strong>Show, don't tell</strong> for anything with a format. Two examples usually beat a paragraph of description.</li>
   <li><strong>Ask for reasoning before the answer</strong>, never after. Reasoning generated after the answer cannot influence it — the answer tokens were already emitted.</li>
@@ -106,7 +106,7 @@
 </div>
 </section>
 
-    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">In-context learning is pattern completion executed by attention circuits — induction heads copy structure from earlier in the context. Chain of thought works because each generated token is another forward pass, so writing intermediate steps buys more computation and puts the results in the context where later steps can attend to them.</p></div>
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">In-context learning is pattern completion executed by attention circuits — induction heads, the best-understood of them, copy structure from earlier in the context. Chain of thought works because each generated token is another forward pass, so writing intermediate steps buys more computation and puts the results in the context where later steps can attend to them.</p></div>
 
     <section class="space-y-4">
       <div class="flex items-center justify-between gap-4">
@@ -163,7 +163,7 @@
 </div>
 <div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="fill" data-answer="induction head|induction heads|induction" data-placeholder="two words">
 <div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">type the term</span></div>
-<div class="prose-block text-sm" data-ex-prompt><p>What is the name of the attention circuit that finds an earlier occurrence of the current token and copies whatever followed it — the mechanism underlying in-context learning?</p></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What is the name of the attention circuit that finds an earlier occurrence of the current token and copies whatever followed it — a key mechanism behind in-context learning?</p></div>
 <div class="note text-sm" data-ex-explain hidden>Induction heads. Their appearance during training coincides with a sharp, measurable jump in in-context learning ability.</div>
 </div>
     </section>
