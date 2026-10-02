@@ -91,7 +91,7 @@
 <section class="space-y-4">
 <h2 id="penalties-beam-search-and-choosing-settings" class="scroll-mt-24 text-2xl">Penalties, beam search, and choosing settings</h2>
 <div class="prose-block">
-<p><strong>Repetition and frequency penalties</strong> subtract from the logits of tokens that already appeared. They reduce loops, but they are blunt instruments — they also penalise words that legitimately recur, such as a variable name in code or a subject's name in an essay. Keep them low or off for code.</p>
+<p><strong>Repetition and frequency penalties</strong> lower the logits of tokens that already appeared. They reduce loops, but they are blunt instruments — they also penalise words that legitimately recur, such as a variable name in code or a subject's name in an essay. Keep them low or off for code.</p>
 <p><strong>Beam search</strong> keeps several candidate continuations alive and expands the best-scoring ones, aiming for a high-probability whole sequence rather than a high-probability next token. It is standard in translation, where there is one right answer, and poor for open-ended text, where it produces bland, generic output — again because likely text is not human text.</p>
 <p>Sensible starting points:</p>
 <div class="overflow-x-auto"><table>
@@ -174,7 +174,7 @@
 <div data-item="2"><span>Truncate with top-k and top-p</span></div>
 <div data-item="3"><span>Renormalise the surviving probabilities and draw a token</span></div>
 </div>
-<div class="note text-sm" data-ex-explain hidden>Penalties and temperature act on logits; truncation acts on the resulting ranking; then you renormalise and sample. Applying temperature after truncation would give quite different results.</div>
+<div class="note text-sm" data-ex-explain hidden>Penalties and temperature act on logits; truncation acts on the resulting ranking; then you renormalise and sample. Temperature never changes the ranking, so top-k keeps the same tokens either way — but it changes the probabilities, so applying it after truncation would change which tokens top-p keeps.</div>
 </div>
     </section>
 

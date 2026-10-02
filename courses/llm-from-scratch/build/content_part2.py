@@ -408,7 +408,7 @@ LESSONS.append(dict(
 """, figure=fig("viz-truncation", "Top-k and top-p side by side",
                 "Set k and p and see which tokens survive under each rule. Move the temperature slider to change how confident the model is, and watch only the top-p set resize.")),
         dict(title="Penalties, beam search, and choosing settings", body="""
-<p><strong>Repetition and frequency penalties</strong> subtract from the logits of tokens that already appeared. They reduce loops, but they are blunt instruments — they also penalise words that legitimately recur, such as a variable name in code or a subject's name in an essay. Keep them low or off for code.</p>
+<p><strong>Repetition and frequency penalties</strong> lower the logits of tokens that already appeared. They reduce loops, but they are blunt instruments — they also penalise words that legitimately recur, such as a variable name in code or a subject's name in an essay. Keep them low or off for code.</p>
 <p><strong>Beam search</strong> keeps several candidate continuations alive and expands the best-scoring ones, aiming for a high-probability whole sequence rather than a high-probability next token. It is standard in translation, where there is one right answer, and poor for open-ended text, where it produces bland, generic output — again because likely text is not human text.</p>
 <p>Sensible starting points:</p>
 <div class="overflow-x-auto"><table>
@@ -462,6 +462,6 @@ LESSONS.append(dict(
                     "Divide the logits by the temperature",
                     "Truncate with top-k and top-p",
                     "Renormalise the surviving probabilities and draw a token"],
-             explain="Penalties and temperature act on logits; truncation acts on the resulting ranking; then you renormalise and sample. Applying temperature after truncation would give quite different results."),
+             explain="Penalties and temperature act on logits; truncation acts on the resulting ranking; then you renormalise and sample. Temperature never changes the ranking, so top-k keeps the same tokens either way — but it changes the probabilities, so applying it after truncation would change which tokens top-p keeps."),
     ],
 ))
