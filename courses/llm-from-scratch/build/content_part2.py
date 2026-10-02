@@ -110,6 +110,7 @@ LESSONS.append(dict(
     sections=[
         dict(title="The set problem", body="""
 <p>Look again at the attention equation. Scores are dot products between queries and keys; the output is a weighted sum. Shuffle the input positions and every score simply moves with them — the computed values are identical. Self-attention treats its input as an unordered <strong>set</strong>.</p>
+<p>One refinement for the models in this course: the causal mask from Lesson 5 does leak a little order, because a token can tell how many positions it is allowed to see. Models can learn to exploit that, but it is a weak, indirect signal, and every major model adds position information explicitly.</p>
 <p>That is a genuine problem, since word order carries a great deal of meaning. It is also a genuine feature: it is exactly what allows all positions to be processed in parallel, which is why transformers train so much faster than recurrent networks. The transformer's answer is not to restore sequential processing but to <strong>put position information into the vectors themselves</strong>.</p>
 """),
         dict(title="Approach 1: add a position vector", body="""
@@ -127,13 +128,13 @@ LESSONS.append(dict(
 <ul>
   <li>It is applied to Q and K inside every attention layer, not added once at the bottom.</li>
   <li>It touches no parameters — it is a fixed geometric transform.</li>
-  <li>Attention naturally decays with distance, which is a sensible prior for language.</li>
+  <li>Summed over all the pairs, attention scores tend to decay with distance, which is a sensible prior for language.</li>
   <li>Because the encoding is relative and continuous, you can stretch it after training to extend context.</li>
 </ul>
 """, figure=fig("viz-rope", "RoPE as rotation",
                 "Watch a query/key pair rotate with position and see how the dot product tracks their separation.")),
         dict(title="Stretching the context window", body="""
-<p>A model trained on 8k tokens does not simply work at 128k. The rotation angles at position 100,000 are outside anything it saw, and quality collapses. The common techniques:</p>
+<p>A model trained on 8k tokens does not simply work at 128k. The fast pairs wrap around many times and have shown the model every angle, but the slow pairs reach angles at position 100,000 that it never saw, and quality collapses. The common techniques:</p>
 <ul>
   <li><strong>Position interpolation</strong> — scale positions down so that 32k tokens occupy the angle range the model was trained on. Positions become fractional. Cheap, and works with a short fine-tune, but it compresses local resolution.</li>
   <li><strong>NTK-aware scaling / YaRN</strong> — scale the frequency bands unevenly: leave high-frequency (local) dimensions alone and stretch the low-frequency (global) ones. Preserves local precision much better.</li>
@@ -146,7 +147,7 @@ LESSONS.append(dict(
         dict(type="mcq",
              prompt="<p>Why does a transformer need explicit position information at all?</p>",
              options=["Because the softmax cannot handle long sequences",
-                      "Because self-attention computes the same result under any permutation of its inputs",
+                      "Because without it, self-attention gives each token the same output however the other tokens are ordered",
                       "Because the tokenizer discards word order",
                       "Because the residual stream overwrites earlier tokens"],
              answer="1",
