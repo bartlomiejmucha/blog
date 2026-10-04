@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>7. Implementing Qwen3 — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l07" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 7 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part II · Running Qwen</span>
+      <h1 class="text-4xl leading-tight">7. Implementing Qwen3</h1>
+      <p class="lead">Write the whole Qwen3 decoder in about 150 lines: grouped-query attention with QK-norm and rotary positions, a SwiGLU MLP, pre-norm residual blocks, and a tied output head.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Trace the shapes through one Qwen3 attention layer</li>
+<li>Explain grouped-query attention and why it shrinks the KV cache</li>
+<li>Explain QK-norm and rotary position embeddings at the level the code needs</li>
+<li>Assemble blocks into a full model with a tied output projection</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="the-shape-of-the-model" class="scroll-mt-24 text-2xl">The shape of the model</h2>
+<div class="prose-block">
+<p>Qwen3-0.6B, which Lessons 7 to 10 use, has this structure:</p>
+<div class="code-block"><pre><code>token ids [B, L]
+  → embed_tokens                 [B, L, 1024]
+  → 28 × TransformerBlock:
+        h = x + Attention(RMSNorm(x))
+        x = h + MLP(RMSNorm(h))
+  → RMSNorm
+  → embed_tokens.asLinear        [B, L, 151936]   (tied output head)
+→ logits</code></pre></div>
+<p>Every block has the same code and different weights. Writing the model therefore means writing four small modules: attention, the MLP, the block that wires them with residual connections, and the outer model.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="attention" class="scroll-mt-24 text-2xl">Attention</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Qwen3.swift</span><span>swift</span></div><pre><code><span class="tk-kw">final</span> <span class="tk-kw">class</span> <span class="tk-type">Attention</span>: <span class="tk-type">Module</span> {
+    <span class="tk-kw">let</span> heads: <span class="tk-type">Int</span>
+    <span class="tk-kw">let</span> kvHeads: <span class="tk-type">Int</span>
+    <span class="tk-kw">let</span> headDim: <span class="tk-type">Int</span>
+    <span class="tk-kw">let</span> scale: <span class="tk-type">Float</span>
+    <span class="tk-kw">let</span> ropeTheta: <span class="tk-type">Float</span>
+
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;q_proj&quot;</span>) <span class="tk-kw">var</span> qProj: <span class="tk-type">Linear</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;k_proj&quot;</span>) <span class="tk-kw">var</span> kProj: <span class="tk-type">Linear</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;v_proj&quot;</span>) <span class="tk-kw">var</span> vProj: <span class="tk-type">Linear</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;o_proj&quot;</span>) <span class="tk-kw">var</span> oProj: <span class="tk-type">Linear</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;q_norm&quot;</span>) <span class="tk-kw">var</span> qNorm: <span class="tk-type">RMSNorm</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;k_norm&quot;</span>) <span class="tk-kw">var</span> kNorm: <span class="tk-type">RMSNorm</span>
+
+    <span class="tk-kw">init</span>(_ c: <span class="tk-type">Qwen3Config</span>) {
+        heads = c.numAttentionHeads
+        kvHeads = c.numKeyValueHeads
+        headDim = c.headDim
+        scale = <span class="tk-num">1</span> / <span class="tk-type">Float</span>(c.headDim).squareRoot()
+        ropeTheta = c.ropeTheta
+        _qProj.wrappedValue = <span class="tk-type">Linear</span>(c.hiddenSize, heads * headDim, bias: <span class="tk-kw">false</span>)
+        _kProj.wrappedValue = <span class="tk-type">Linear</span>(c.hiddenSize, kvHeads * headDim, bias: <span class="tk-kw">false</span>)
+        _vProj.wrappedValue = <span class="tk-type">Linear</span>(c.hiddenSize, kvHeads * headDim, bias: <span class="tk-kw">false</span>)
+        _oProj.wrappedValue = <span class="tk-type">Linear</span>(heads * headDim, c.hiddenSize, bias: <span class="tk-kw">false</span>)
+        _qNorm.wrappedValue = <span class="tk-type">RMSNorm</span>(dimensions: headDim, eps: c.rmsNormEps)
+        _kNorm.wrappedValue = <span class="tk-type">RMSNorm</span>(dimensions: headDim, eps: c.rmsNormEps)
+    }
+
+    <span class="tk-kw">func</span> callAsFunction(_ x: <span class="tk-type">MLXArray</span>, cache: <span class="tk-type">LayerCache</span>?) -&gt; <span class="tk-type">MLXArray</span> {
+        <span class="tk-kw">let</span> (<span class="tk-type">B</span>, <span class="tk-type">L</span>) = (x.dim(<span class="tk-num">0</span>), x.dim(<span class="tk-num">1</span>))
+
+        <span class="tk-com">// [B, L, hidden] -&gt; [B, heads, L, headDim]</span>
+        <span class="tk-kw">let</span> q = qNorm(qProj(x).reshaped(<span class="tk-type">B</span>, <span class="tk-type">L</span>, heads, headDim)).transposed(<span class="tk-num">0</span>, <span class="tk-num">2</span>, <span class="tk-num">1</span>, <span class="tk-num">3</span>)
+        <span class="tk-kw">let</span> k = kNorm(kProj(x).reshaped(<span class="tk-type">B</span>, <span class="tk-type">L</span>, kvHeads, headDim)).transposed(<span class="tk-num">0</span>, <span class="tk-num">2</span>, <span class="tk-num">1</span>, <span class="tk-num">3</span>)
+        <span class="tk-kw">let</span> v = vProj(x).reshaped(<span class="tk-type">B</span>, <span class="tk-type">L</span>, kvHeads, headDim).transposed(<span class="tk-num">0</span>, <span class="tk-num">2</span>, <span class="tk-num">1</span>, <span class="tk-num">3</span>)
+
+        <span class="tk-kw">let</span> out = attend(q: q, k: k, v: v, cache: cache, scale: scale) { [headDim, ropeTheta] x, offset <span class="tk-kw">in</span>
+            <span class="tk-type">MLXFast</span>.<span class="tk-type">RoPE</span>(x, dimensions: headDim, traditional: <span class="tk-kw">false</span>, base: ropeTheta, scale: <span class="tk-num">1</span>, offset: offset)
+        }
+        <span class="tk-kw">return</span> oProj(out.transposed(<span class="tk-num">0</span>, <span class="tk-num">2</span>, <span class="tk-num">1</span>, <span class="tk-num">3</span>).reshaped(<span class="tk-type">B</span>, <span class="tk-type">L</span>, heads * headDim))
+    }
+}</code></pre></div>
+<p>Follow the shapes for a batch of one, <code>L</code> tokens:</p>
+<ol>
+<li><strong>Project.</strong> <code>q_proj</code> maps 1024 to 16 heads × 128 = 2048; <code>k_proj</code> and <code>v_proj</code> map to 8 heads × 128 = 1024. Reshape to <code>[1, L, heads, 128]</code> and transpose to <code>[1, heads, L, 128]</code>, the layout the attention kernel wants.</li>
+<li><strong>QK-norm.</strong> Each query and key vector is RMS-normalized with its own learned scale. This is new in Qwen3: it keeps attention scores in a stable range, which lets the model train at large learning rates without spikes. For us it is just one more <code>RMSNorm</code> over the last dimension, applied before RoPE.</li>
+<li><strong>Rotary positions.</strong> RoPE rotates each pair of dimensions by an angle proportional to the token's position, at a different frequency per pair (base <code>rope_theta</code> = 1,000,000). The dot product of a rotated query and key then depends on the distance between them, which is how attention knows word order.</li>
+<li><strong>Attend</strong> to everything cached so far, plus these tokens.</li>
+<li><strong>Merge heads</strong> back to <code>[1, L, 2048]</code> and project to 1024 with <code>o_proj</code>.</li>
+</ol>
+<p>Steps 3 and 4 live in a small helper, <code>attend</code>, shared by both model families, because the cache logic is the same for all of them:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/LayerCache.swift</span><span>swift</span></div><pre><code><span class="tk-kw">let</span> kv = cache <span class="tk-kw">as</span>? <span class="tk-type">KVCache</span>
+<span class="tk-kw">let</span> offset = kv?.offset ?? <span class="tk-num">0</span>
+<span class="tk-kw">var</span> (keys, values) = (rope(k, offset), v)
+<span class="tk-kw">if</span> <span class="tk-kw">let</span> kv {
+    (keys, values) = kv.update(keys: keys, values: values)
+}
+<span class="tk-kw">return</span> <span class="tk-type">MLXFast</span>.scaledDotProductAttention(
+    queries: rope(q, offset), keys: keys, values: values, scale: scale, mask: mask)</code></pre></div>
+<p>(The helper's first branch handles batches of independent sequences, Lesson 15.) The <code>offset</code> is the number of tokens already in the cache: during prefill it is 0, and when decoding token 600 it is 599, so that token is rotated to the right position. The mask is <code>.causal</code> when several tokens arrive at once, so token <em>i</em> cannot see tokens after it; a single decode token may see everything, so no mask is needed.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="grouped-query-attention" class="scroll-mt-24 text-2xl">Grouped-query attention</h2>
+<div class="prose-block">
+<p>There are 16 query heads but only 8 key/value heads. Each pair of query heads shares one key/value head. This is <strong>grouped-query attention</strong> (GQA), and its purpose is the cache: keys and values are what must be stored for every past token, so halving the KV heads halves the cache with little loss in quality. Larger Qwen3 models go further; the 32B model has 64 query heads and 8 KV heads.</p>
+<p>The fused attention kernel handles the grouping itself when the number of query heads is a multiple of the KV heads, so the code never copies keys to match queries. Lesson 9 turns this into concrete megabytes.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="mlp-and-block" class="scroll-mt-24 text-2xl">MLP and block</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Qwen3.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// `silu(gate) * x` fused into one kernel, so the product is rounded to</span>
+<span class="tk-com">/// bf16 once instead of twice. This matches the Python reference exactly.</span>
+<span class="tk-kw">let</span> swiglu = compile(shapeless: <span class="tk-kw">true</span>) { (gate: <span class="tk-type">MLXArray</span>, x: <span class="tk-type">MLXArray</span>) <span class="tk-kw">in</span>
+    silu(gate) * x
+}</code></pre></div><div class="code-block"><div class="code-title"><span>code/Sources/Inference/Qwen3.swift</span><span>swift</span></div><pre><code><span class="tk-kw">final</span> <span class="tk-kw">class</span> <span class="tk-type">MLP</span>: <span class="tk-type">Module</span>, <span class="tk-type">UnaryLayer</span> {
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;gate_proj&quot;</span>) <span class="tk-kw">var</span> gateProj: <span class="tk-type">Linear</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;up_proj&quot;</span>) <span class="tk-kw">var</span> upProj: <span class="tk-type">Linear</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;down_proj&quot;</span>) <span class="tk-kw">var</span> downProj: <span class="tk-type">Linear</span>
+
+    <span class="tk-kw">init</span>(_ c: <span class="tk-type">Qwen3Config</span>) {
+        _gateProj.wrappedValue = <span class="tk-type">Linear</span>(c.hiddenSize, c.intermediateSize, bias: <span class="tk-kw">false</span>)
+        _upProj.wrappedValue = <span class="tk-type">Linear</span>(c.hiddenSize, c.intermediateSize, bias: <span class="tk-kw">false</span>)
+        _downProj.wrappedValue = <span class="tk-type">Linear</span>(c.intermediateSize, c.hiddenSize, bias: <span class="tk-kw">false</span>)
+    }
+
+    <span class="tk-kw">func</span> callAsFunction(_ x: <span class="tk-type">MLXArray</span>) -&gt; <span class="tk-type">MLXArray</span> {
+        downProj(swiglu(gateProj(x), upProj(x)))
+    }
+}</code></pre></div>
+<p>SwiGLU uses two input projections: one is passed through SiLU and acts as a gate on the other, elementwise. Then <code>down_proj</code> maps the 3072-wide result back to 1024. The gate-times-value product is compiled into one kernel, as Lesson 4 described.</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Qwen3.swift</span><span>swift</span></div><pre><code><span class="tk-kw">final</span> <span class="tk-kw">class</span> <span class="tk-type">TransformerBlock</span>: <span class="tk-type">Module</span> {
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;self_attn&quot;</span>) <span class="tk-kw">var</span> attention: <span class="tk-type">Attention</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;mlp&quot;</span>) <span class="tk-kw">var</span> mlp: <span class="tk-type">UnaryLayer</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;input_layernorm&quot;</span>) <span class="tk-kw">var</span> inputNorm: <span class="tk-type">RMSNorm</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;post_attention_layernorm&quot;</span>) <span class="tk-kw">var</span> postAttentionNorm: <span class="tk-type">RMSNorm</span>
+
+    <span class="tk-kw">init</span>(_ c: <span class="tk-type">Qwen3Config</span>, index: <span class="tk-type">Int</span>) {
+        _attention.wrappedValue = <span class="tk-type">Attention</span>(c)
+        <span class="tk-kw">if</span> c.isMoELayer(index) {
+            _mlp.wrappedValue = <span class="tk-type">SparseMoE</span>(
+                hidden: c.hiddenSize, intermediate: c.moeIntermediateSize!, experts: c.numExperts!,
+                topK: c.numExpertsPerTok!, normalizeTopK: c.normTopkProb ?? <span class="tk-kw">true</span>, sharedIntermediate: <span class="tk-kw">nil</span>)
+        } <span class="tk-kw">else</span> {
+            _mlp.wrappedValue = <span class="tk-type">MLP</span>(c)
+        }
+        _inputNorm.wrappedValue = <span class="tk-type">RMSNorm</span>(dimensions: c.hiddenSize, eps: c.rmsNormEps)
+        _postAttentionNorm.wrappedValue = <span class="tk-type">RMSNorm</span>(dimensions: c.hiddenSize, eps: c.rmsNormEps)
+    }
+
+    <span class="tk-kw">func</span> callAsFunction(_ x: <span class="tk-type">MLXArray</span>, cache: <span class="tk-type">LayerCache</span>?) -&gt; <span class="tk-type">MLXArray</span> {
+        <span class="tk-kw">let</span> h = x + attention(inputNorm(x), cache: cache)
+        <span class="tk-kw">return</span> h + mlp(postAttentionNorm(h))
+    }
+}</code></pre></div>
+<p>The block is <strong>pre-norm</strong>: each sublayer sees a normalized input, and its output is <em>added</em> to the residual stream rather than replacing it. The stream itself is never normalized inside the stack, which is why its values can grow large; in Qwen3-0.6B some reach about 8,000 by layer 2. Keep that in mind for the next lesson, because bfloat16 at 8,000 has a step size of 32.</p>
+<p>The <code>mlp</code> property is typed <code>UnaryLayer</code> so that mixture-of-experts layers can take its place (Lesson 16).</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-full-model" class="scroll-mt-24 text-2xl">The full model</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Qwen3.swift</span><span>swift</span></div><pre><code><span class="tk-kw">final</span> <span class="tk-kw">class</span> <span class="tk-type">Qwen3Backbone</span>: <span class="tk-type">Module</span> {
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;embed_tokens&quot;</span>) <span class="tk-kw">var</span> embedTokens: <span class="tk-type">Embedding</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;layers&quot;</span>) <span class="tk-kw">var</span> layers: [<span class="tk-type">TransformerBlock</span>]
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;norm&quot;</span>) <span class="tk-kw">var</span> norm: <span class="tk-type">RMSNorm</span>
+
+    <span class="tk-kw">init</span>(_ c: <span class="tk-type">Qwen3Config</span>) {
+        _embedTokens.wrappedValue = <span class="tk-type">Embedding</span>(embeddingCount: c.vocabSize, dimensions: c.hiddenSize)
+        _layers.wrappedValue = (<span class="tk-num">0</span> ..&lt; c.numHiddenLayers).map { <span class="tk-type">TransformerBlock</span>(c, index: $0) }
+        _norm.wrappedValue = <span class="tk-type">RMSNorm</span>(dimensions: c.hiddenSize, eps: c.rmsNormEps)
+    }
+
+    <span class="tk-kw">func</span> callAsFunction(_ tokens: <span class="tk-type">MLXArray</span>, caches: [<span class="tk-type">LayerCache</span>]?) -&gt; <span class="tk-type">MLXArray</span> {
+        <span class="tk-kw">var</span> h = embedTokens(tokens)
+        <span class="tk-kw">for</span> (i, layer) <span class="tk-kw">in</span> layers.enumerated() {
+            h = layer(h, cache: caches?[i])
+        }
+        <span class="tk-kw">return</span> norm(h)
+    }
+}</code></pre></div><div class="code-block"><div class="code-title"><span>code/Sources/Inference/Qwen3.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Qwen3 decoder, dense or mixture-of-experts. Maps token ids `[B, L]` to logits `[B, L, vocab]`.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">final</span> <span class="tk-kw">class</span> <span class="tk-type">Qwen3Model</span>: <span class="tk-type">Module</span>, <span class="tk-type">LanguageModel</span> {
+    <span class="tk-kw">public</span> <span class="tk-kw">let</span> config: <span class="tk-type">Qwen3Config</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;model&quot;</span>) <span class="tk-kw">var</span> model: <span class="tk-type">Qwen3Backbone</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;lm_head&quot;</span>) <span class="tk-kw">var</span> lmHead: <span class="tk-type">Linear</span>?
+
+    <span class="tk-kw">public</span> <span class="tk-kw">init</span>(_ config: <span class="tk-type">Qwen3Config</span>) {
+        <span class="tk-kw">self</span>.config = config
+        _model.wrappedValue = <span class="tk-type">Qwen3Backbone</span>(config)
+        <span class="tk-kw">if</span> !config.tieWordEmbeddings {
+            _lmHead.wrappedValue = <span class="tk-type">Linear</span>(config.hiddenSize, config.vocabSize, bias: <span class="tk-kw">false</span>)
+        }
+    }
+
+    <span class="tk-kw">public</span> <span class="tk-kw">func</span> callAsFunction(_ tokens: <span class="tk-type">MLXArray</span>, caches: [<span class="tk-type">LayerCache</span>]?) -&gt; <span class="tk-type">MLXArray</span> {
+        <span class="tk-kw">let</span> h = model(tokens, caches: caches)
+        <span class="tk-com">// Tied models reuse the embedding matrix as the output projection.</span>
+        <span class="tk-kw">return</span> lmHead?(h) ?? model.embedTokens.asLinear(h)
+    }
+
+    <span class="tk-kw">public</span> <span class="tk-kw">func</span> makeCaches() -&gt; [<span class="tk-type">LayerCache</span>] {
+        (<span class="tk-num">0</span> ..&lt; config.numHiddenLayers).map { _ <span class="tk-kw">in</span> <span class="tk-type">KVCache</span>() }
+    }
+}</code></pre></div>
+<p>The outer key <code>"model"</code> reproduces the checkpoint's <code>model.</code> prefix. <code>lm_head</code> is optional: for tied models the property stays <code>nil</code>, so the parameter tree has no <code>lm_head.weight</code>, which is exactly what <code>verify: [.all]</code> expects. <code>makeCaches</code> returns one empty cache per layer; Lesson 9 fills them.</p>
+<p>The model conforms to a two-method protocol that the rest of the server programs against, so the generation loop and engines work for Qwen3 and Qwen3.5 alike:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/LanguageModel.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// What the generation loop needs from a model.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">protocol</span> <span class="tk-type">LanguageModel</span>: <span class="tk-type">AnyObject</span> {
+    <span class="tk-com">/// Token ids `[B, L]` to logits `[B, L, vocab]`, updating `caches`.</span>
+    <span class="tk-kw">func</span> callAsFunction(_ tokens: <span class="tk-type">MLXArray</span>, caches: [<span class="tk-type">LayerCache</span>]?) -&gt; <span class="tk-type">MLXArray</span>
+    <span class="tk-com">/// One fresh cache per layer.</span>
+    <span class="tk-kw">func</span> makeCaches() -&gt; [<span class="tk-type">LayerCache</span>]
+}</code></pre></div>
+<p>That is the whole model. The next lesson loads real weights into it and proves it computes the same thing as the reference implementation.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">Qwen3 is a stack of identical pre-norm blocks: x + attention(norm(x)), then h + mlp(norm(h)). Attention projects to 16 query heads and 8 shared key/value heads, normalizes queries and keys per head, rotates them by position, and runs fused causal attention against the cache. The MLP is SwiGLU. A final norm and the tied embedding matrix turn the last hidden state into logits.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="numeric" data-answer="2048" data-tolerance="0" data-placeholder="width">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Qwen3-0.6B: hidden size 1024, 16 query heads, head dim 128. What is the output width of <code>q_proj</code>?</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>16 heads × 128 = 2048. Note it is wider than the hidden size: Qwen3 sets head_dim independently of hidden_size / heads.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>With 16 query heads and 8 KV heads, how does the KV cache compare with full multi-head attention (16 KV heads)?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Same size</button>
+<button type="button" data-opt="1">Half the size</button>
+<button type="button" data-opt="2">A quarter of the size</button>
+<button type="button" data-opt="3">Twice the size</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>The cache stores keys and values per KV head. Eight instead of sixteen halves it.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="2">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Decoding the 600th token, what offset does RoPE use?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">0</button>
+<button type="button" data-opt="1">1</button>
+<button type="button" data-opt="2">599</button>
+<button type="button" data-opt="3">600</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Positions count from 0. The cache holds 599 tokens (positions 0 to 598), so the new token is at position 599.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why is no attention mask needed when decoding a single token?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Single tokens skip attention</button>
+<button type="button" data-opt="1">The only token in the query is the newest, and it is allowed to see every cached token</button>
+<button type="button" data-opt="2">The cache is already masked</button>
+<button type="button" data-opt="3">Masks only matter for MoE</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Causality forbids seeing the future. A lone query is the latest position, so nothing in the keys is in its future.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="order">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">put in order</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Order the steps inside Qwen3 attention.</p></div>
+<div class="space-y-2" data-ex-order>
+<div data-item="0"><span>Project to queries, keys and values</span></div>
+<div data-item="1"><span>RMS-normalize queries and keys per head</span></div>
+<div data-item="2"><span>Rotate queries and keys by position (RoPE)</span></div>
+<div data-item="3"><span>Append keys and values to the cache</span></div>
+<div data-item="4"><span>Fused causal attention</span></div>
+<div data-item="5"><span>Merge heads and apply o_proj</span></div>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>QK-norm comes before RoPE in Qwen3; keys are rotated before caching, so cached keys never need rotating again.</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="06-tokenizer-and-chat-template.html" data-nav-prev>← 6. Tokenizer and chat template</a>
+      <a class="btn btn-primary" href="08-loading-weights-and-proving-parity.html" data-nav-next>8. Loading weights and proving parity →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+
+</body>
+</html>

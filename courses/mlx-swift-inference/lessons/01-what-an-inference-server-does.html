@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>1. What an inference server does — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l01" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 1 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part I · Foundations</span>
+      <h1 class="text-4xl leading-tight">1. What an inference server does</h1>
+      <p class="lead">Before writing code, see the whole machine: what happens between an HTTP request arriving and the last token leaving, and which part of the code owns each step.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Name the stages a chat request passes through inside an inference server</li>
+<li>Tell time to first token apart from decode speed, and say what each one depends on</li>
+<li>Find your way around the companion package you will build</li>
+<li>Run the finished server and talk to it with curl</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="the-job" class="scroll-mt-24 text-2xl">The job</h2>
+<div class="prose-block">
+<p>A language model is a function: give it a list of token ids, and it returns a score for every possible next token. That is all the model does. Everything else a product like ChatGPT does around it, from accepting messages over HTTP to streaming words back, is the job of an <strong>inference server</strong>.</p>
+<p>In this course you build one from scratch, in Swift, on Apple's MLX framework. By the end it will:</p>
+<ul>
+<li>load Qwen3 and Qwen3.5 checkpoints straight from Hugging Face, dense and mixture-of-experts, quantizing them on the fly;</li>
+<li>run them with model code you wrote yourself, checked against the Python reference implementation;</li>
+<li>speak the OpenAI Chat Completions API, including streaming and tool calls, so existing clients work unchanged;</li>
+<li>serve many clients from one GPU, with a request queue, cancellation, prompt caching and continuous batching;</li>
+<li>decode faster with <strong>speculative decoding</strong>, using the multi-token-prediction (MTP) head that ships inside every Qwen3.5 checkpoint.</li>
+</ul>
+<p>This lesson is the map. Each stage you see here gets one or more lessons of its own later.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-life-of-a-request" class="scroll-mt-24 text-2xl">The life of a request</h2>
+<div class="prose-block">
+<p>Follow one request through the finished server. A client sends:</p>
+<div class="code-block"><pre><code>curl localhost:8080/v1/chat/completions -H &#x27;content-type: application/json&#x27; -d &#x27;{
+  &quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Why is the sky blue?&quot;}],
+  &quot;stream&quot;: true
+}&#x27; </code></pre></div>
+<p>The list says what each stage does and where its code lives; the diagram after it lets you step through them in order.</p>
+<ol>
+<li><strong>HTTP layer</strong> (<code>Sources/serve</code>). Hummingbird parses the JSON body. Nothing here touches the model.</li>
+<li><strong>Chat template</strong>. The messages are rendered into one string with the model's own template, for example <code>&lt;|im_start|&gt;user\nWhy is the sky blue?&lt;|im_end|&gt;\n&lt;|im_start|&gt;assistant\n</code>, and tokenized into integers.</li>
+<li><strong>Queue</strong>. The token list goes into the engine's inbox. If the inbox is full, the client gets HTTP 429 right away instead of waiting forever.</li>
+<li><strong>Prefill</strong>. A dedicated worker thread runs the model over the whole prompt in one pass. This fills the caches and produces the first token.</li>
+<li><strong>Decode loop</strong>. The worker feeds each new token back in, one forward pass per token, until an end-of-turn token or the length limit.</li>
+<li><strong>Detokenize and stream</strong>. Token ids become text, and each piece is sent to the client as a server-sent event while the next token is being computed.</li>
+</ol>
+</div>
+<div class="figure" id="viz-lifecycle"><p class="figure-title">Life of a request</p><p class="figure-sub">Step through the stages. The highlighted box is where the request is now; the line under it says what the client sees at that moment.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="two-numbers-time-to-first-token-and-decode-speed" class="scroll-mt-24 text-2xl">Two numbers: time to first token and decode speed</h2>
+<div class="prose-block">
+<p>Users judge a chat server by two things, and they come from different parts of the pipeline.</p>
+<p><strong>Time to first token (TTFT)</strong> is the wait before any text appears. It is dominated by prefill: the model must read the whole prompt before it can say anything. A long system prompt or a long chat history makes it worse. Prompt caching (Lesson 14) attacks it by skipping prompt tokens the server has already processed.</p>
+<p><strong>Decode speed</strong>, in tokens per second, is how fast text streams once it starts. Each new token costs one full forward pass, and as Lesson 2 shows, that pass is limited by how fast the chip can read the weights from memory, not by arithmetic. Quantization (Lesson 5), speculative decoding (Lessons 18 and 19) and batching (Lesson 15) all attack it from different angles.</p>
+<p>A server also has a third number its operator cares about: <strong>throughput</strong>, the total tokens per second across all clients. Batching raises throughput, sometimes at the cost of each client's own decode speed. Keep the three apart; most performance discussions go wrong by mixing them up.</p>
+<div class="note"><p class="text-sm">Concrete numbers from the finished server on a base M1 with 8 GB: Qwen3.5-0.8B with 4-bit weights decodes at about 90 tokens per second, and a 1,570-token prompt takes about 3.2 seconds to answer the first time and under 1 second on the next turn, when the prompt cache hits.</p></div>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-companion-package" class="scroll-mt-24 text-2xl">The companion package</h2>
+<div class="prose-block">
+<p>All code in this course lives in one Swift package, <code>QwenServe</code>, which you can download from the course home page. Every listing in the lessons is cut directly from it at build time, so what you read is what compiles. The layout:</p>
+<table>
+<tr><th>Path</th><th>What it is</th><th>Lessons</th></tr>
+<tr><td><code>Sources/mlx-basics</code></td><td>small runnable examples of MLX itself</td><td>3, 4</td></tr>
+<tr><td><code>Sources/Inference/Qwen3*.swift</code>, <code>Loader.swift</code></td><td>Qwen3 config, model and weight loading</td><td>5, 7, 8</td></tr>
+<tr><td><code>Detokenizer.swift</code>, <code>LoadedModel.swift</code></td><td>chat templates, streaming text, stop strings</td><td>6</td></tr>
+<tr><td><code>KVCache.swift</code>, <code>Generator.swift</code>, <code>Sampler.swift</code></td><td>the generation loop</td><td>9, 10</td></tr>
+<tr><td><code>Sources/serve</code></td><td>the HTTP server</td><td>11, 12, 21</td></tr>
+<tr><td><code>Engine.swift</code>, <code>PromptCache.swift</code>, <code>BatchEngine.swift</code></td><td>scheduling, caching, batching</td><td>13, 14, 15</td></tr>
+<tr><td><code>SwitchLayers.swift</code></td><td>mixture-of-experts layers</td><td>16</td></tr>
+<tr><td><code>Qwen35*.swift</code>, <code>GatedDelta.swift</code>, <code>LayerCache.swift</code></td><td>the Qwen3.5 hybrid architecture</td><td>17</td></tr>
+<tr><td><code>MTPHead.swift</code>, <code>MTPGenerator.swift</code></td><td>speculative decoding with MTP</td><td>18, 19</td></tr>
+<tr><td><code>Sources/infer</code></td><td>a command-line tool for experiments and benchmarks</td><td>8, 19, 20</td></tr>
+<tr><td><code>Tests/InferenceTests</code></td><td>unit tests and model-backed checks</td><td>throughout</td></tr>
+</table>
+<p>You can read the course in order and rebuild the package file by file, or download it, run it first, and then read the lessons to understand each part. Both work.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="run-the-finished-server" class="scroll-mt-24 text-2xl">Run the finished server</h2>
+<div class="prose-block">
+<p>You need a Mac with Apple Silicon, Xcode, and Python only for the download tool. Fetch a model and build the server:</p>
+<div class="code-block"><pre><code><span class="tk-com"># 1. A model. The original checkpoint, because it still contains the MTP head.</span>
+pip install -U huggingface_hub
+hf download Qwen/Qwen3.5-0.8B --local-dir models/Qwen3.5-0.8B
+
+<span class="tk-com"># 2. Build in Release. xcodebuild, not &quot;swift build&quot;: only Xcode&#x27;s build</span>
+<span class="tk-com">#    system compiles MLX&#x27;s Metal shaders (Lesson 3).</span>
+cd code
+xcodebuild build -scheme serve -configuration Release \
+  -destination &#x27;platform=OS X&#x27; -derivedDataPath DerivedData
+
+<span class="tk-com"># 3. Run it. --bits 8 quantizes to 8-bit on load; Lesson 19 explains why</span>
+<span class="tk-com">#    8-bit is the sweet spot for speculative decoding on an M1.</span>
+DerivedData/Build/Products/Release/serve ../models/Qwen3.5-0.8B --bits 8 --port 8080</code></pre></div>
+<p>In another terminal:</p>
+<div class="code-block"><pre><code>curl -s localhost:8080/v1/chat/completions -H &#x27;content-type: application/json&#x27; \
+  -d &#x27;{&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;Name three planets.&quot;}],&quot;temperature&quot;:0}&#x27;
+<span class="tk-com"># {&quot;choices&quot;:[{&quot;message&quot;:{&quot;role&quot;:&quot;assistant&quot;,&quot;content&quot;:&quot;Earth, Mars, and Jupiter.&quot;},</span>
+<span class="tk-com">#   &quot;finish_reason&quot;:&quot;stop&quot;,...}],&quot;usage&quot;:{&quot;prompt_tokens&quot;:19,&quot;completion_tokens&quot;:7,...}}</span></code></pre></div>
+<p>Any OpenAI-compatible client works too: point its base URL at <code>http://localhost:8080/v1</code>. Now you know what you are building. The next lesson explains the single most important fact about running it fast.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">An inference server turns chat messages into tokens, runs the model once over the prompt (prefill) and then once per new token (decode), and streams text back as it goes. The hard parts are not the HTTP: they are keeping one GPU busy for many clients, reusing work between requests, and making each decode step cheap.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="order">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">put in order</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Put the stages of a streamed chat request in order.</p></div>
+<div class="space-y-2" data-ex-order>
+<div data-item="0"><span>Render messages with the chat template and tokenize</span></div>
+<div data-item="1"><span>Put the request in the engine's inbox</span></div>
+<div data-item="2"><span>Prefill: run the model over the whole prompt</span></div>
+<div data-item="3"><span>Decode: one forward pass per new token</span></div>
+<div data-item="4"><span>Detokenize each token and send it as a server-sent event</span></div>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Template and tokenize first, because the engine only deals in token ids. The queue sits between the HTTP layer and the single worker. Prefill produces the first token; decode produces the rest; detokenizing and streaming happen as each token appears.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A user complains that answers take five seconds to <em>start</em> appearing, though they stream quickly afterwards. Which stage is the first suspect?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Decode</button>
+<button type="button" data-opt="1">Prefill</button>
+<button type="button" data-opt="2">Detokenization</button>
+<button type="button" data-opt="3">JSON encoding</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>The wait before the first token is time to first token, and it is dominated by prefill: the model must process the whole prompt first. Long system prompts and chat histories make it worse. Fast streaming afterwards means decode is fine.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="multi" data-answer="0,1,3">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which of these raise <strong>throughput</strong> (total tokens per second across all clients)? Select all that apply.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Batching several requests into each decode step</button>
+<button type="button" data-opt="1">Reading the weights from memory faster</button>
+<button type="button" data-opt="2">A shorter HTTP route name</button>
+<button type="button" data-opt="3">Reusing cached prompt work between requests</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Batching amortizes each weight read over several sequences; faster memory reads speed up every step; prompt caching removes prefill work entirely. The route name is irrelevant.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why does the course build with <code>xcodebuild</code> instead of <code>swift build</code>?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">swift build cannot link Swift packages</button>
+<button type="button" data-opt="1">Only Xcode's build system compiles MLX's Metal shaders</button>
+<button type="button" data-opt="2">xcodebuild produces smaller binaries</button>
+<button type="button" data-opt="3">Hummingbird requires Xcode</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>MLX's GPU kernels are Metal shaders. SwiftPM on the command line cannot compile them into the library MLX loads at run time, so the build must go through Xcode's build system.</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="../index.html" data-nav-prev>← Course home</a>
+      <a class="btn btn-primary" href="02-apple-silicon-and-the-memory-bandwidth-bound.html" data-nav-next>2. Apple Silicon and the memory-bandwidth bound →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l01.js" defer></script>
+</body>
+</html>

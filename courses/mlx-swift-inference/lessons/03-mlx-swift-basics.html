@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>3. MLX Swift basics — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l03" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 3 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part I · Foundations</span>
+      <h1 class="text-4xl leading-tight">3. MLX Swift basics</h1>
+      <p class="lead">Set up the package, then learn the four ideas you will use on every page that follows: arrays and shapes, dtypes, lazy evaluation, and asynchronous evaluation.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Create a Swift package that depends on MLX and build it correctly</li>
+<li>Create, reshape, index and broadcast MLXArrays</li>
+<li>Explain bfloat16 and why models use it</li>
+<li>Explain lazy evaluation and use eval, item and asyncEval deliberately</li>
+<li>Benchmark only Release builds, and know why</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="the-package" class="scroll-mt-24 text-2xl">The package</h2>
+<div class="prose-block">
+<p>Everything lives in one Swift package. Here is its manifest. The dependency versions are pinned exactly, because MLX numbers can shift slightly between releases and you want the results in this course to reproduce:</p>
+<div class="code-block"><div class="code-title"><span>code/Package.swift</span><span>swift</span></div><pre><code><span class="tk-com">// swift-tools-version: 6.0</span>
+<span class="tk-kw">import</span> <span class="tk-type">PackageDescription</span>
+
+<span class="tk-kw">let</span> <span class="tk-kw">package</span> = <span class="tk-type">Package</span>(
+    name: <span class="tk-str">&quot;QwenServe&quot;</span>,
+    platforms: [.macOS(.v14)],
+    products: [
+        .library(name: <span class="tk-str">&quot;Inference&quot;</span>, targets: [<span class="tk-str">&quot;Inference&quot;</span>]),
+        .executable(name: <span class="tk-str">&quot;infer&quot;</span>, targets: [<span class="tk-str">&quot;infer&quot;</span>]),
+        .executable(name: <span class="tk-str">&quot;serve&quot;</span>, targets: [<span class="tk-str">&quot;serve&quot;</span>]),
+        .executable(name: <span class="tk-str">&quot;mlx-basics&quot;</span>, targets: [<span class="tk-str">&quot;mlx-basics&quot;</span>]),
+    ],
+    dependencies: [
+        .<span class="tk-kw">package</span>(url: <span class="tk-str">&quot;https://github.com/ml-explore/mlx-swift&quot;</span>, exact: <span class="tk-str">&quot;0.32.3&quot;</span>),
+        .<span class="tk-kw">package</span>(url: <span class="tk-str">&quot;https://github.com/huggingface/swift-transformers&quot;</span>, exact: <span class="tk-str">&quot;1.3.4&quot;</span>),
+        .<span class="tk-kw">package</span>(url: <span class="tk-str">&quot;https://github.com/hummingbird-project/hummingbird&quot;</span>, exact: <span class="tk-str">&quot;2.27.0&quot;</span>),
+    ],
+    targets: [
+        .target(
+            name: <span class="tk-str">&quot;Inference&quot;</span>,
+            dependencies: [
+                .product(name: <span class="tk-str">&quot;MLX&quot;</span>, <span class="tk-kw">package</span>: <span class="tk-str">&quot;mlx-swift&quot;</span>),
+                .product(name: <span class="tk-str">&quot;MLXNN&quot;</span>, <span class="tk-kw">package</span>: <span class="tk-str">&quot;mlx-swift&quot;</span>),
+                .product(name: <span class="tk-str">&quot;MLXFast&quot;</span>, <span class="tk-kw">package</span>: <span class="tk-str">&quot;mlx-swift&quot;</span>),
+                .product(name: <span class="tk-str">&quot;Tokenizers&quot;</span>, <span class="tk-kw">package</span>: <span class="tk-str">&quot;swift-transformers&quot;</span>),
+            ]
+        ),
+        .executableTarget(
+            name: <span class="tk-str">&quot;infer&quot;</span>,
+            dependencies: [<span class="tk-str">&quot;Inference&quot;</span>]
+        ),
+        .executableTarget(
+            name: <span class="tk-str">&quot;mlx-basics&quot;</span>,
+            dependencies: [
+                .product(name: <span class="tk-str">&quot;MLX&quot;</span>, <span class="tk-kw">package</span>: <span class="tk-str">&quot;mlx-swift&quot;</span>),
+                .product(name: <span class="tk-str">&quot;MLXNN&quot;</span>, <span class="tk-kw">package</span>: <span class="tk-str">&quot;mlx-swift&quot;</span>),
+            ]
+        ),
+        .testTarget(
+            name: <span class="tk-str">&quot;InferenceTests&quot;</span>,
+            dependencies: [<span class="tk-str">&quot;Inference&quot;</span>]
+        ),
+        .executableTarget(
+            name: <span class="tk-str">&quot;serve&quot;</span>,
+            dependencies: [
+                <span class="tk-str">&quot;Inference&quot;</span>,
+                .product(name: <span class="tk-str">&quot;Hummingbird&quot;</span>, <span class="tk-kw">package</span>: <span class="tk-str">&quot;hummingbird&quot;</span>),
+            ]
+        ),
+    ]
+)</code></pre></div>
+<ul>
+<li><code>mlx-swift</code> provides <code>MLX</code> (arrays and operations, including the fast fused kernels), <code>MLXNN</code> (layers) and more. Version 0.32.3 bundles MLX core 0.32.2. That matters when you compare against Python (Lesson 8).</li>
+<li><code>swift-transformers</code> provides Hugging Face tokenizers and chat-template rendering (Lesson 6).</li>
+<li><code>hummingbird</code> is the HTTP server (Lesson 11).</li>
+</ul>
+<p>Build with Xcode's build system. MLX's GPU kernels are Metal shaders, and command-line SwiftPM cannot compile them into the library MLX loads at run time; a <code>swift build</code> binary fails when it first touches the GPU.</p>
+<div class="code-block"><pre><code>xcodebuild build -scheme mlx-basics -configuration Release \
+  -destination &#x27;platform=OS X&#x27; -derivedDataPath DerivedData
+DerivedData/Build/Products/Release/mlx-basics</code></pre></div></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="arrays-shapes-and-broadcasting" class="scroll-mt-24 text-2xl">Arrays, shapes and broadcasting</h2>
+<div class="prose-block">
+<p>An <code>MLXArray</code> is an n-dimensional array with a shape and a dtype. If you have used NumPy or PyTorch, the operations will look familiar:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/mlx-basics/main.swift</span><span>swift</span></div><pre><code><span class="tk-kw">func</span> arraysAndShapes() {
+    <span class="tk-kw">let</span> a = <span class="tk-type">MLXArray</span>([<span class="tk-num">1</span>, <span class="tk-num">2</span>, <span class="tk-num">3</span>, <span class="tk-num">4</span>, <span class="tk-num">5</span>, <span class="tk-num">6</span>] <span class="tk-kw">as</span> [<span class="tk-type">Float</span>]).reshaped(<span class="tk-num">2</span>, <span class="tk-num">3</span>)
+    print(a.shape, a.dtype)              <span class="tk-com">// [2, 3] float32</span>
+
+    <span class="tk-kw">let</span> b = <span class="tk-type">MLXArray</span>([<span class="tk-num">10</span>, <span class="tk-num">20</span>, <span class="tk-num">30</span>] <span class="tk-kw">as</span> [<span class="tk-type">Float</span>])
+    print(a + b)                          <span class="tk-com">// b is broadcast across both rows</span>
+
+    <span class="tk-kw">let</span> m = <span class="tk-type">MLXArray</span>.ones([<span class="tk-num">3</span>, <span class="tk-num">4</span>])
+    print(matmul(a, m).shape)             <span class="tk-com">// [2, 4]</span>
+
+    print(a[<span class="tk-num">0</span>])                           <span class="tk-com">// first row</span>
+    print(a[<span class="tk-num">0</span>..., <span class="tk-num">1</span>])                     <span class="tk-com">// second column</span>
+    print(a[.ellipsis, ..&lt;<span class="tk-num">2</span>])             <span class="tk-com">// first two columns</span>
+}</code></pre></div>
+<p>Two rules carry most of the weight:</p>
+<ul>
+<li><strong>Broadcasting.</strong> When shapes differ, size-1 or missing leading dimensions are stretched to match. <code>[2, 3] + [3]</code> adds the vector to each row. Models use this constantly: adding a bias, scaling by a norm weight.</li>
+<li><strong>Indexing.</strong> <code>a[0..., 1]</code> means "all rows, column 1"; <code>.ellipsis</code> stands for "all leading dimensions", so <code>x[.ellipsis, ..&lt;2]</code> takes the first two entries of the last axis whatever the rank. Negative indices count from the end: <code>logits[0..., -1, 0...]</code> is the last position of every sequence, which you will write in every generation loop.</li>
+</ul>
+<p>Model tensors in this course follow one convention: <code>[B, L, D]</code> for activations (batch, sequence length, hidden size) and <code>[B, heads, L, headDim]</code> inside attention.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="dtypes-why-bfloat16" class="scroll-mt-24 text-2xl">dtypes: why bfloat16</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/mlx-basics/main.swift</span><span>swift</span></div><pre><code><span class="tk-kw">func</span> dtypes() {
+    <span class="tk-kw">let</span> x = <span class="tk-type">MLXArray</span>([<span class="tk-num">1.5</span>, -<span class="tk-num">2.25</span>, <span class="tk-num">3.0</span>] <span class="tk-kw">as</span> [<span class="tk-type">Float</span>])
+    <span class="tk-kw">let</span> h = x.asType(.bfloat16)
+    print(h.dtype, h.nbytes)              <span class="tk-com">// bfloat16, 6 bytes: 2 per element</span>
+    <span class="tk-com">// bfloat16 keeps float32&#x27;s range but only ~3 significant digits.</span>
+    print(<span class="tk-type">MLXArray</span>(<span class="tk-type">Float</span>(<span class="tk-num">1000.1</span>)).asType(.bfloat16).item(<span class="tk-type">Float</span>.<span class="tk-kw">self</span>))  <span class="tk-com">// 1000.0</span>
+}</code></pre></div>
+<p>Model weights and activations are usually stored in <strong>bfloat16</strong>: 16 bits with float32's 8-bit exponent but only 7 bits of mantissa. It covers the same range as float32, so huge or tiny values do not overflow, but it keeps only about three significant decimal digits: 1000.1 becomes 1000.0.</p>
+<p>Half the bytes means half the memory traffic, and Lesson 2 showed that memory traffic is the speed limit. The cost is precision, and you will meet it again: when comparing your model with the Python reference, differences show up in the last bfloat16 digit, and occasionally flip which of two near-equal tokens wins (Lesson 8). Places where precision matters, such as softmax and the linear-attention state, compute in float32 and convert back.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="lazy-evaluation" class="scroll-mt-24 text-2xl">Lazy evaluation</h2>
+<div class="prose-block">
+<p>This is the most important idea in MLX. Operations do not compute anything when you call them. They record a node in a graph and return immediately. The work runs when a result is actually needed:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/mlx-basics/main.swift</span><span>swift</span></div><pre><code><span class="tk-kw">func</span> lazyEvaluation() {
+    <span class="tk-kw">let</span> a = <span class="tk-type">MLXArray</span>.ones([<span class="tk-num">4096</span>, <span class="tk-num">4096</span>])
+    eval(matmul(a, a))                    <span class="tk-com">// warm up: the first call also sets up kernels</span>
+    <span class="tk-kw">let</span> t0 = <span class="tk-type">Date</span>()
+    <span class="tk-kw">let</span> b = matmul(a, a) + <span class="tk-num">1</span>              <span class="tk-com">// builds a graph; nothing runs yet</span>
+    <span class="tk-kw">let</span> built = <span class="tk-type">Date</span>()
+    eval(b)                               <span class="tk-com">// now the GPU does the work</span>
+    <span class="tk-kw">let</span> done = <span class="tk-type">Date</span>()
+    print(<span class="tk-type">String</span>(format: <span class="tk-str">&quot;build %.3f ms, eval %.1f ms&quot;</span>,
+                 built.timeIntervalSince(t0) * <span class="tk-num">1000</span>, done.timeIntervalSince(built) * <span class="tk-num">1000</span>))
+    <span class="tk-com">// item() and printing also force evaluation.</span>
+    print(b[<span class="tk-num">0</span>, <span class="tk-num">0</span>].item(<span class="tk-type">Float</span>.<span class="tk-kw">self</span>))       <span class="tk-com">// 4097.0</span>
+}</code></pre></div>
+<p>On the M1 this prints about <code>build 0.04 ms, eval 94 ms</code>: building the graph for a 4096×4096 matrix multiply is instant, and the GPU work happens inside <code>eval</code>. Evaluation is triggered by</p>
+<ul>
+<li><code>eval(...)</code>, explicitly;</li>
+<li><code>item()</code>, which reads a scalar back to Swift;</li>
+<li>printing an array.</li>
+</ul>
+<p>Laziness lets MLX fuse and schedule work, and it lets you build a whole forward pass before anything runs. It also has two traps. First, a graph that is never evaluated keeps growing: in a generation loop you must <code>eval</code> the caches regularly, or each step drags the entire history along. Second, a stray <code>item()</code> in a hot loop forces the CPU to wait for the GPU at that point. Lesson 19 finds exactly this bug in the speculative decoder and removes three of its four waits.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="asynchronous-evaluation" class="scroll-mt-24 text-2xl">Asynchronous evaluation</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/mlx-basics/main.swift</span><span>swift</span></div><pre><code><span class="tk-kw">func</span> asyncEvaluation() {
+    <span class="tk-kw">let</span> a = <span class="tk-type">MLXArray</span>.ones([<span class="tk-num">2048</span>, <span class="tk-num">2048</span>])
+    <span class="tk-kw">var</span> x = a
+    <span class="tk-kw">for</span> _ <span class="tk-kw">in</span> <span class="tk-num">0</span> ..&lt; <span class="tk-num">3</span> { x = matmul(x, a) / <span class="tk-num">2048</span> }
+    asyncEval(x)                          <span class="tk-com">// queue the work and return at once</span>
+    <span class="tk-com">// ... the CPU is free to prepare the next step here ...</span>
+    print(x[<span class="tk-num">0</span>, <span class="tk-num">0</span>].item(<span class="tk-type">Float</span>.<span class="tk-kw">self</span>))       <span class="tk-com">// blocks only if the GPU is not done yet</span>
+}</code></pre></div>
+<p><code>asyncEval</code> starts evaluating and returns at once. The CPU can keep working, usually building the graph for the next step, while the GPU computes. Reading the result later blocks only if the GPU has not finished.</p>
+<p>The generation loop in Lesson 9 is built around this. Before handing token <em>n</em> to the caller, it queues the forward pass for token <em>n+1</em>, so the CPU-side work of detokenizing and streaming token <em>n</em> overlaps with GPU work. On the M1 that saves about 1.2 ms per token, roughly 11%, measured in Lesson 20.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="measure-release-builds-only" class="scroll-mt-24 text-2xl">Measure Release builds only</h2>
+<div class="prose-block">
+<p>MLX's C++ core is compiled as part of your package. In a Debug build it is compiled without optimization, and the CPU side of every operation, from building graphs to dispatching kernels, becomes several times slower. On the M1 the same Qwen3.5 decode runs at 36 tokens per second in Debug and 89 in Release.</p>
+<p>The GPU kernels are identical in both, so Debug builds are fine for checking correctness. But every speed number in this course comes from a Release build, and any number you measure should too. While writing this course, early speculative-decoding results that looked like a 1.4× win in Debug turned out to be a slowdown in Release, because Debug overhead had hidden what the GPU was really doing.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">MLX arrays are lazy: operations record a graph, and work happens on eval, item, or printing. asyncEval starts the work without waiting, which lets the CPU prepare the next step while the GPU runs. Build with xcodebuild so the Metal shaders are compiled, and measure only Release builds.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>You run <code>let y = matmul(x, w)</code> and then read <code>y.shape</code>. Has the GPU multiplied the matrices yet?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Yes, every operation runs immediately</button>
+<button type="button" data-opt="1">No. The shape is known from the graph; the multiply runs on eval, item or print</button>
+<button type="button" data-opt="2">Only if x is on the GPU</button>
+<button type="button" data-opt="3">Only in Release builds</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Shapes are computed when the graph node is created. The values are computed only when something forces evaluation.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="fill" data-answer="asyncEval|asyncEval()|MLX.asyncEval" data-placeholder="function name">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">type the term</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which function starts evaluating an array in the background and returns immediately?</p></div>
+<div class="note text-sm" data-ex-explain hidden><p><code>asyncEval</code> queues the work and returns. A later read of the result blocks only if the GPU is not done.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="numeric" data-answer="2" data-tolerance="0.01" data-placeholder="MB">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>An array of 1,000,000 bfloat16 values. How many megabytes is it (1 MB = 10<sup>6</sup> bytes)?</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>bfloat16 is 2 bytes per value: 2,000,000 bytes = 2 MB. In float32 it would be 4 MB.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A generation loop appends to a KV cache every step but never calls eval on it. What goes wrong?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Nothing, MLX evaluates automatically each step</button>
+<button type="button" data-opt="1">The graph keeps growing, so each step carries the whole history of operations and gets slower</button>
+<button type="button" data-opt="2">The cache is silently discarded</button>
+<button type="button" data-opt="3">The program does not compile</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Unevaluated arrays are graphs. Without regular evaluation the cache becomes a chain of every update ever made.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why measure performance only on Release builds?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Debug builds use different GPU kernels</button>
+<button type="button" data-opt="1">Debug builds compile MLX's C++ core without optimization, so CPU-side overhead inflates every timing</button>
+<button type="button" data-opt="2">Release builds use the Neural Engine</button>
+<button type="button" data-opt="3">Debug builds disable lazy evaluation</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>The Metal kernels are the same; the C++ code that builds and dispatches them is much slower unoptimized. Debug timings mostly measure that overhead.</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="02-apple-silicon-and-the-memory-bandwidth-bound.html" data-nav-prev>← 2. Apple Silicon and the memory-bandwidth bound</a>
+      <a class="btn btn-primary" href="04-modules-parameters-and-fast-kernels.html" data-nav-next>4. Modules, parameters and fast kernels →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>5. Reading a checkpoint — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l05" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 5 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part II · Running Qwen</span>
+      <h1 class="text-4xl leading-tight">5. Reading a checkpoint</h1>
+      <p class="lead">A Hugging Face model is a folder of JSON and safetensors files. Learn what is in each, how weights are named, and exactly how MLX's 4-bit format stores a matrix.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Read a model's config.json and know which fields the code needs</li>
+<li>Explain the safetensors format and why it loads fast</li>
+<li>Map checkpoint tensor names to modules, including tied embeddings</li>
+<li>Compute the size and error of MLX affine group quantization</li>
+<li>Write the Qwen3 config type and weight loader</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="what-is-in-the-folder" class="scroll-mt-24 text-2xl">What is in the folder</h2>
+<div class="prose-block">
+<p>Download <code>mlx-community/Qwen3-0.6B-4bit</code>, the small model used through Lesson 10, and list it:</p>
+<div class="code-block"><pre><code>config.json              architecture hyperparameters
+model.safetensors        the weights (large models split this into shards)
+model.safetensors.index.json   which tensor is in which shard
+tokenizer.json           the BPE vocabulary and merge rules
+tokenizer_config.json    special tokens and the chat template
+vocab.json, merges.txt, added_tokens.json, special_tokens_map.json</code></pre></div>
+<p>Two files define the model: <code>config.json</code> and the safetensors. The tokenizer files are the subject of the next lesson.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="config-json" class="scroll-mt-24 text-2xl">config.json</h2>
+<div class="prose-block">
+<div class="code-block"><pre><code>{
+  &quot;architectures&quot;: [&quot;Qwen3ForCausalLM&quot;],
+  &quot;model_type&quot;: &quot;qwen3&quot;,
+  &quot;hidden_size&quot;: 1024,
+  &quot;num_hidden_layers&quot;: 28,
+  &quot;intermediate_size&quot;: 3072,
+  &quot;num_attention_heads&quot;: 16,
+  &quot;num_key_value_heads&quot;: 8,
+  &quot;head_dim&quot;: 128,
+  &quot;rms_norm_eps&quot;: 1e-06,
+  &quot;rope_theta&quot;: 1000000,
+  &quot;vocab_size&quot;: 151936,
+  &quot;tie_word_embeddings&quot;: true,
+  &quot;quantization&quot;: {&quot;group_size&quot;: 64, &quot;bits&quot;: 4},
+  ...
+}</code></pre></div>
+<p>Each field becomes a dimension or a constant in the model code: the width of the hidden vector, the number of layers, the MLP's inner width, how many query and key/value heads attention uses, the base frequency of the rotary position encoding, and the vocabulary size. <code>model_type</code> tells the server which implementation to use. <code>quantization</code> appears only in pre-quantized MLX checkpoints.</p>
+<p>The Swift side is a <code>Codable</code> struct with only the fields the code uses. <code>convertFromSnakeCase</code> maps <code>num_hidden_layers</code> to <code>numHiddenLayers</code>, so no coding keys are needed:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Qwen3Config.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// The subset of a Hugging Face `config.json` that a Qwen3 dense model needs.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">struct</span> <span class="tk-type">Qwen3Config</span>: <span class="tk-type">Codable</span>, <span class="tk-type">Sendable</span> {
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> hiddenSize: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> numHiddenLayers: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> intermediateSize: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> numAttentionHeads: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> numKeyValueHeads: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> headDim: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> rmsNormEps: <span class="tk-type">Float</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> ropeTheta: <span class="tk-type">Float</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> vocabSize: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> tieWordEmbeddings: <span class="tk-type">Bool</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> quantization: <span class="tk-type">Quantization</span>?
+
+    <span class="tk-com">// Mixture of experts (qwen3_moe). Absent for dense models.</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> numExperts: <span class="tk-type">Int</span>?
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> numExpertsPerTok: <span class="tk-type">Int</span>?
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> moeIntermediateSize: <span class="tk-type">Int</span>?
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> decoderSparseStep: <span class="tk-type">Int</span>?
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> mlpOnlyLayers: [<span class="tk-type">Int</span>]?
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> normTopkProb: <span class="tk-type">Bool</span>?
+
+    <span class="tk-kw">func</span> isMoELayer(_ i: <span class="tk-type">Int</span>) -&gt; <span class="tk-type">Bool</span> {
+        <span class="tk-kw">guard</span> <span class="tk-kw">let</span> n = numExperts, n &gt; <span class="tk-num">0</span> <span class="tk-kw">else</span> { <span class="tk-kw">return</span> <span class="tk-kw">false</span> }
+        <span class="tk-kw">return</span> !(mlpOnlyLayers ?? []).contains(i) &amp;&amp; (i + <span class="tk-num">1</span>) % (decoderSparseStep ?? <span class="tk-num">1</span>) == <span class="tk-num">0</span>
+    }</code></pre></div>
+<p>The real file also has optional mixture-of-experts fields (Lesson 16) and a <code>load(from:)</code> helper that decodes the file with that key strategy.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="safetensors" class="scroll-mt-24 text-2xl">safetensors</h2>
+<div class="prose-block">
+<p>A <code>.safetensors</code> file is deliberately simple:</p>
+<ol>
+<li>8 bytes: the length of the header, as a little-endian integer;</li>
+<li>the header: JSON mapping each tensor name to its dtype, shape and byte range;</li>
+<li>the raw bytes of every tensor, back to back.</li>
+</ol>
+<div class="code-block"><pre><code>{&quot;model.layers.0.mlp.down_proj.weight&quot;: {&quot;dtype&quot;: &quot;U32&quot;, &quot;shape&quot;: [1024, 384],
+                                         &quot;data_offsets&quot;: [0, 1572864]},
+ &quot;model.layers.0.mlp.down_proj.scales&quot;: {&quot;dtype&quot;: &quot;BF16&quot;, &quot;shape&quot;: [1024, 48], ...},
+ ...}</code></pre></div>
+<p>There is no code in the file, unlike Python pickle-based formats, so loading one cannot execute anything. And because each tensor is a contiguous byte range at a known offset, a loader can map the file into memory and hand the bytes to the GPU directly. <code>MLX.loadArrays(url:)</code> returns a <code>[String: MLXArray]</code> whose arrays are read lazily.</p>
+<p>Large models are split into shards (<code>model-00001-of-00004.safetensors</code>, ...) with an index file. Our loader simply reads every <code>.safetensors</code> file in the folder and merges the dictionaries, which works for one file or fifty.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="names-and-tied-embeddings" class="scroll-mt-24 text-2xl">Names and tied embeddings</h2>
+<div class="prose-block">
+<p>The tensor names are the module paths from Lesson 4. For Qwen3:</p>
+<table>
+<tr><th>Name</th><th>Shape (bf16 model)</th><th>What it is</th></tr>
+<tr><td><code>model.embed_tokens.weight</code></td><td>[151936, 1024]</td><td>one vector per token id</td></tr>
+<tr><td><code>model.layers.N.input_layernorm.weight</code></td><td>[1024]</td><td>RMSNorm before attention</td></tr>
+<tr><td><code>model.layers.N.self_attn.{q,k,v,o}_proj.weight</code></td><td>[2048, 1024], [1024, 1024], ...</td><td>attention projections</td></tr>
+<tr><td><code>model.layers.N.self_attn.{q,k}_norm.weight</code></td><td>[128]</td><td>per-head RMSNorm on queries and keys</td></tr>
+<tr><td><code>model.layers.N.mlp.{gate,up,down}_proj.weight</code></td><td>[3072, 1024], ...</td><td>the SwiGLU MLP</td></tr>
+<tr><td><code>model.norm.weight</code></td><td>[1024]</td><td>final RMSNorm</td></tr>
+</table>
+<p>One name is conspicuously missing: <code>lm_head.weight</code>, the output projection from a hidden vector to 151,936 logits. With <code>tie_word_embeddings: true</code> the model reuses the embedding matrix for it, read the other way round: the logit for token <em>t</em> is the dot product of the hidden vector with token <em>t</em>'s embedding. That saves 155 million parameters on this small model, a quarter of its total. In MLX, <code>Embedding.asLinear(x)</code> does exactly this multiply, quantized or not.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="affine-group-quantization" class="scroll-mt-24 text-2xl">Affine group quantization</h2>
+<div class="prose-block">
+<p>MLX's default quantization is <strong>affine, per group</strong>. Take a row of the weight matrix and cut it into groups of 64 consecutive values. For each group:</p>
+<ol>
+<li>find its minimum and maximum;</li>
+<li>set <code>scale = (max − min) / 15</code> and <code>bias = min</code>, so the 16 integer levels 0..15 span the group's range;</li>
+<li>store each weight as <code>q = round((w − bias) / scale)</code>, a 4-bit integer.</li>
+</ol>
+<p>Reconstruction is <code>w ≈ scale × q + bias</code>. The error per weight is at most half a step, <code>scale / 2</code>, so groups with a narrow range are stored precisely and one outlier only hurts its own group of 64. Try it in the diagram: drag the outlier and watch the step size, and the error of every other weight in the group, grow.</p>
+<p><strong>Storage.</strong> Each weight costs 4 bits. Each group also stores a bfloat16 scale and bias, 32 bits shared by 64 weights, which is 0.5 bits per weight. So "4-bit" really means <strong>4.5 bits per weight</strong>, and 8-bit means 8.5. In the file you see this as three tensors per layer: <code>weight</code> as <code>U32</code> with 8 values packed per word, so its last dimension is <code>in / 8</code>; and <code>scales</code> and <code>biases</code> with last dimension <code>in / 64</code>.</p>
+</div>
+<div class="figure" id="viz-quant"><p class="figure-title">One group of 64 weights at 4 bits</p><p class="figure-sub">Rings are the original weights, blue dots their 4-bit reconstructions, horizontal lines the 16 levels. Drag the slider to move the orange outlier and watch the levels spread apart.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-loader" class="scroll-mt-24 text-2xl">The loader</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Loader.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Builds a Qwen3 model from a local Hugging Face directory.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">func</span> loadQwen3(from directory: <span class="tk-type">URL</span>) <span class="tk-kw">throws</span> -&gt; <span class="tk-type">Qwen3Model</span> {
+    <span class="tk-kw">let</span> config = <span class="tk-kw">try</span> <span class="tk-type">Qwen3Config</span>.load(from: directory)
+    <span class="tk-kw">let</span> model = <span class="tk-type">Qwen3Model</span>(config)
+
+    <span class="tk-com">// 1. Read every *.safetensors shard into one flat name -&gt; array map.</span>
+    <span class="tk-kw">let</span> files = <span class="tk-kw">try</span> <span class="tk-type">FileManager</span>.<span class="tk-kw">default</span>.contentsOfDirectory(at: directory, includingPropertiesForKeys: <span class="tk-kw">nil</span>)
+        .filter { $0.pathExtension == <span class="tk-str">&quot;safetensors&quot;</span> }
+    <span class="tk-kw">guard</span> !files.isEmpty <span class="tk-kw">else</span> { <span class="tk-kw">throw</span> <span class="tk-type">LoadError</span>.noWeights(directory) }
+    <span class="tk-kw">var</span> weights = [<span class="tk-type">String</span>: <span class="tk-type">MLXArray</span>]()
+    <span class="tk-kw">for</span> file <span class="tk-kw">in</span> files {
+        weights.merge(<span class="tk-kw">try</span> loadArrays(url: file)) { _, new <span class="tk-kw">in</span> new }
+    }
+
+    <span class="tk-com">// Tied models have no separate output projection.</span>
+    <span class="tk-kw">if</span> config.tieWordEmbeddings { weights[<span class="tk-str">&quot;lm_head.weight&quot;</span>] = <span class="tk-kw">nil</span> }
+    stackExperts(&amp;weights)
+
+    <span class="tk-com">// 2. Swap Linear/Embedding for their quantized versions wherever the</span>
+    <span class="tk-com">//    checkpoint ships scales, so the parameter shapes match.</span>
+    <span class="tk-kw">if</span> <span class="tk-kw">let</span> q = config.quantization {
+        quantize(model: model) { path, _ <span class="tk-kw">in</span>
+            weights[<span class="tk-str">&quot;\(path).scales&quot;</span>] != <span class="tk-kw">nil</span> ? (q.groupSize, q.bits, .affine) : <span class="tk-kw">nil</span>
+        }
+    }
+
+    <span class="tk-com">// 3. Copy the arrays into the module tree. `.all` fails on any missing</span>
+    <span class="tk-com">//    or unexpected key, which catches naming mistakes early.</span>
+    <span class="tk-kw">try</span> model.update(parameters: <span class="tk-type">ModuleParameters</span>.unflattened(weights), verify: [.all])
+    eval(model)
+    <span class="tk-kw">return</span> model
+}</code></pre></div>
+<p>Four steps, and the order matters:</p>
+<ol>
+<li><strong>Read</strong> every shard into one flat dictionary.</li>
+<li><strong>Clean up</strong> names: drop <code>lm_head.weight</code> for tied models, and stack per-expert tensors for mixture-of-experts models (Lesson 16).</li>
+<li><strong>Quantize the module tree first</strong>. A fresh model has float <code>Linear</code> layers expecting a <code>[1024, 1024]</code> weight, but the file holds a packed <code>[1024, 128]</code> integer weight plus scales and biases. <code>quantize</code> swaps each layer whose name has a <code>.scales</code> entry in the file for a <code>QuantizedLinear</code>, so the shapes line up.</li>
+<li><strong>Update with verification</strong>, then <code>eval</code> once so the weights are materialized before the first request instead of during it.</li>
+</ol>
+<p>The Qwen3.5 loader in Lesson 17 adds one more trick: it loads an original bfloat16 checkpoint and quantizes it itself, which is how it keeps the MTP head that pre-converted community checkpoints strip out.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">A checkpoint folder holds config.json (architecture hyperparameters), tokenizer files, and safetensors shards: a JSON header followed by raw tensor bytes, so loading is little more than mapping the file. Tensor names are module paths. MLX's affine quantization stores each group of 64 weights as 4-bit integers plus a bfloat16 scale and bias, about 4.5 bits per weight.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="numeric" data-answer="8.5" data-tolerance="0.01" data-placeholder="bits">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>MLX 8-bit quantization with group size 64 and bfloat16 scales and biases. How many bits does each weight cost on average?</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>8 bits for the value, plus 32 bits of scale and bias shared by 64 weights = 0.5. Total 8.5.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="numeric" data-answer="1024" data-tolerance="0" data-placeholder="hidden size">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A 4-bit MLX checkpoint has <code>model.embed_tokens.weight</code> with shape [151936, 128] and dtype U32. What is the model's hidden size?</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>Each UInt32 packs eight 4-bit values, so 128 words hold 1024 weights per row.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A Qwen3 checkpoint has no <code>lm_head.weight</code>. Where do the logits come from?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">A randomly initialized head</button>
+<button type="button" data-opt="1">The embedding matrix, used as the output projection (tied embeddings)</button>
+<button type="button" data-opt="2">The last layer's MLP</button>
+<button type="button" data-opt="3">The tokenizer</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>With tie_word_embeddings the same matrix maps ids to vectors on the way in and vectors to logits on the way out. Embedding.asLinear does the second direction.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why must the loader call <code>quantize(model:)</code> <em>before</em> <code>update(parameters:)</code> for a pre-quantized checkpoint?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Quantizing afterwards would be slower</button>
+<button type="button" data-opt="1">The fresh model's float Linear layers expect full-size weights; the file holds packed weights plus scales and biases, so the layers must be swapped first for names and shapes to match</button>
+<button type="button" data-opt="2">update only accepts quantized modules</button>
+<button type="button" data-opt="3">It does not matter</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>QuantizedLinear has weight, scales and biases parameters of different shapes. Swapping first makes the module tree match the file exactly, so verify .all passes.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="numeric" data-answer="0.025" data-tolerance="0.0006" data-placeholder="error">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A group's weights range from −0.30 to 0.45. With 4-bit affine quantization, what is the largest possible rounding error for a weight in this group? (Give it to three decimals.)</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>scale = (0.45 − (−0.30)) / 15 = 0.05. Rounding to the nearest level is off by at most half a step: 0.025.</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="04-modules-parameters-and-fast-kernels.html" data-nav-prev>← 4. Modules, parameters and fast kernels</a>
+      <a class="btn btn-primary" href="06-tokenizer-and-chat-template.html" data-nav-next>6. Tokenizer and chat template →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l05.js" defer></script>
+</body>
+</html>

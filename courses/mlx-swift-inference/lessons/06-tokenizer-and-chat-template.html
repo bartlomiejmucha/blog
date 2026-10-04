@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>6. Tokenizer and chat template — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l06" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 6 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part II · Running Qwen</span>
+      <h1 class="text-4xl leading-tight">6. Tokenizer and chat template</h1>
+      <p class="lead">The model only sees integers. Turn chat messages into exactly the token sequence Qwen was trained on, and turn generated tokens back into text that can be streamed safely.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Explain what the tokenizer files contain and which library uses them</li>
+<li>Render a conversation with Qwen's chat template, with and without thinking</li>
+<li>Choose the right set of end-of-sequence tokens</li>
+<li>Stream text from tokens without breaking multi-byte characters</li>
+<li>Implement stop strings that never leak a partial match</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="from-text-to-ids" class="scroll-mt-24 text-2xl">From text to ids</h2>
+<div class="prose-block">
+<p>Qwen uses byte-level BPE: text is turned into UTF-8 bytes, and frequent byte sequences are merged into tokens according to the rules in <code>tokenizer.json</code>. Common words are one token, rare words several, and any byte sequence at all can be encoded, so there is no "unknown" token. Qwen3 has a vocabulary of 151,936 entries; Qwen3.5 has 248,320.</p>
+<p>A few tokens are <strong>special</strong>: they are never produced by splitting ordinary text, and they carry structure.</p>
+<table>
+<tr><th>Token</th><th>Id (Qwen3)</th><th>Meaning</th></tr>
+<tr><td><code>&lt;|endoftext|&gt;</code></td><td>151643</td><td>end of a document in pretraining</td></tr>
+<tr><td><code>&lt;|im_start|&gt;</code></td><td>151644</td><td>start of a chat turn</td></tr>
+<tr><td><code>&lt;|im_end|&gt;</code></td><td>151645</td><td>end of a chat turn</td></tr>
+<tr><td><code>&lt;think&gt;</code>, <code>&lt;/think&gt;</code></td><td>151667, 151668</td><td>wrap the model's reasoning</td></tr>
+</table>
+<p>You do not implement BPE yourself. The <code>Tokenizers</code> library from swift-transformers reads the same files as Python's <code>transformers</code> and produces identical ids. <code>AutoTokenizer.from(modelFolder:)</code> loads it from the checkpoint folder.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-chat-template" class="scroll-mt-24 text-2xl">The chat template</h2>
+<div class="prose-block">
+<p>A chat model was fine-tuned on conversations in one exact format, and it only behaves well if you reproduce that format to the byte. The format is stored with the model, in <code>tokenizer_config.json</code> (or <code>chat_template.jinja</code>), as a Jinja template. For Qwen it is <strong>ChatML</strong>. One user message renders as:</p>
+<div class="code-block"><pre><code>&lt;|im_start|&gt;user
+Why is the sky blue?&lt;|im_end|&gt;
+&lt;|im_start|&gt;assistant
+&lt;think&gt;
+
+&lt;/think&gt;</code></pre></div>
+<p>The prompt ends at the start of the assistant's turn, and the model continues from there. The empty <code>&lt;think&gt;</code> block is what <code>enable_thinking: false</code> produces: Qwen3 and Qwen3.5 are hybrid reasoning models, and an already-closed think block tells them to answer directly. With thinking enabled, the template stops after <code>assistant\n</code>, and the model writes its reasoning inside <code>&lt;think&gt;...&lt;/think&gt;</code> before the answer.</p>
+<p>Our wrapper passes the messages, the tools (Lesson 21) and the thinking flag straight to the template engine:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/LoadedModel.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Formats a conversation, and the tools the model may call, with the</span>
+<span class="tk-com">/// model&#x27;s chat template.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">func</span> prompt(
+    messages: [[<span class="tk-type">String</span>: <span class="tk-kw">any</span> <span class="tk-type">Sendable</span>]], tools: [[<span class="tk-type">String</span>: <span class="tk-kw">any</span> <span class="tk-type">Sendable</span>]]? = <span class="tk-kw">nil</span>, enableThinking: <span class="tk-type">Bool</span> = <span class="tk-kw">false</span>
+) <span class="tk-kw">throws</span> -&gt; [<span class="tk-type">Int</span>] {
+    <span class="tk-kw">try</span> tokenizer.applyChatTemplate(
+        messages: messages, tools: tools, additionalContext: [<span class="tk-str">&quot;enable_thinking&quot;</span>: enableThinking])
+}</code></pre></div>
+<p>For the example above this produces the 18 ids <code>[151644, 872, 198, 10234, 374, 279, 12884, 6303, 30, 151645, 198, 151644, 77091, 198, 151667, 271, 151668, 271]</code>, the same ids Python's <code>apply_chat_template</code> produces. Comparing the two is the first test to write for any new model: a wrong template does not crash, it just makes the model quietly worse.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="when-to-stop" class="scroll-mt-24 text-2xl">When to stop</h2>
+<div class="prose-block">
+<p>Generation stops when the model emits an end token. Which one? <code>config.json</code> names one <code>eos_token_id</code>, but in practice a chat model ends a turn with <code>&lt;|im_end|&gt;</code>, a base model ends a document with <code>&lt;|endoftext|&gt;</code>, and a fine-tune sometimes uses either. The loader collects all of them into a set:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/LoadedModel.swift</span><span>swift</span></div><pre><code><span class="tk-com">// Chat models end a turn with &lt;|im_end|&gt;; base models with &lt;|endoftext|&gt;.</span>
+<span class="tk-kw">let</span> eos = <span class="tk-type">Set</span>([tokenizer.eosTokenId,
+               tokenizer.convertTokenToId(<span class="tk-str">&quot;&lt;|im_end|&gt;&quot;</span>),
+               tokenizer.convertTokenToId(<span class="tk-str">&quot;&lt;|endoftext|&gt;&quot;</span>)].compactMap { $0 })</code></pre></div>
+<p>Checking membership in this set after every token is cheap, and stopping one token too late is far more visible to users (the model starts writing the next user turn) than any cost of the check.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="streaming-text-from-tokens" class="scroll-mt-24 text-2xl">Streaming text from tokens</h2>
+<div class="prose-block">
+<p>Streaming means sending text after every token. The obvious approach, decoding each token on its own and sending the result, breaks in two ways:</p>
+<ul>
+<li><strong>Multi-byte characters.</strong> Byte-level BPE can split one character across tokens. An emoji is four UTF-8 bytes and may arrive as two tokens; decoding the first alone gives the replacement character U+FFFD (�).</li>
+<li><strong>Context-dependent spacing.</strong> Some tokenizers decide how a token prints based on its neighbours, so decoding tokens one by one does not always concatenate to the decoding of the whole sequence.</li>
+</ul>
+<p>The fix is to decode a window of recent tokens, emit only the part of the text that is new, and wait if the text ends in U+FFFD:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Detokenizer.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Turns a growing list of token ids into text increments.</span>
+<span class="tk-com">///</span>
+<span class="tk-com">/// One token is not always one piece of text: a multi-byte character can</span>
+<span class="tk-com">/// span tokens, and the tokenizer may change how earlier tokens print once</span>
+<span class="tk-com">/// it sees the next one. So we decode a window of recent tokens and emit</span>
+<span class="tk-com">/// only what is new, holding back a trailing U+FFFD (an incomplete</span>
+<span class="tk-com">/// character). The window restarts after each newline to keep decoding cheap.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">struct</span> <span class="tk-type">StreamingDetokenizer</span> {
+    <span class="tk-kw">let</span> tokenizer: <span class="tk-kw">any</span> <span class="tk-type">Tokenizer</span>
+    <span class="tk-kw">var</span> tokens: [<span class="tk-type">Int</span>] = []
+    <span class="tk-kw">var</span> segmentStart = <span class="tk-num">0</span>
+    <span class="tk-kw">var</span> emitted = <span class="tk-str">&quot;&quot;</span>
+
+    <span class="tk-kw">public</span> <span class="tk-kw">init</span>(tokenizer: <span class="tk-kw">any</span> <span class="tk-type">Tokenizer</span>) {
+        <span class="tk-kw">self</span>.tokenizer = tokenizer
+    }
+
+    <span class="tk-kw">public</span> <span class="tk-kw">mutating</span> <span class="tk-kw">func</span> append(_ token: <span class="tk-type">Int</span>) -&gt; <span class="tk-type">String</span> {
+        tokens.append(token)
+        <span class="tk-kw">let</span> text = tokenizer.decode(tokens: <span class="tk-type">Array</span>(tokens[segmentStart...]))
+        <span class="tk-kw">if</span> text.hasSuffix(<span class="tk-str">&quot;\u{FFFD}&quot;</span>) { <span class="tk-kw">return</span> <span class="tk-str">&quot;&quot;</span> }
+        <span class="tk-kw">let</span> delta = <span class="tk-type">String</span>(text.dropFirst(emitted.count))
+        emitted = text
+        <span class="tk-kw">if</span> text.hasSuffix(<span class="tk-str">&quot;\n&quot;</span>) {
+            segmentStart = tokens.count
+            emitted = <span class="tk-str">&quot;&quot;</span>
+        }
+        <span class="tk-kw">return</span> delta
+    }
+}</code></pre></div>
+<p>Decoding the whole output after every token would be correct but quadratic in length. Restarting the window after each newline keeps the work per token small, because a newline is a safe boundary for every tokenizer in this course.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="stop-strings" class="scroll-mt-24 text-2xl">Stop strings</h2>
+<div class="prose-block">
+<p>Clients can ask generation to stop at strings such as <code>"\n\nUser:"</code>. The difficulty is the same as above, one level up: a stop string can arrive split over several tokens. If you stream <code>"\n\nUs"</code> and only then see <code>"er:"</code>, the client already has text it should never have received.</p>
+<p>So the matcher holds back any suffix of the pending text that could still become a stop string, and releases it as soon as it cannot:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Detokenizer.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Watches streamed text for stop strings. Text that might be the start of</span>
+<span class="tk-com">/// a stop string is held back until it is clear either way.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">struct</span> <span class="tk-type">StopMatcher</span> {
+    <span class="tk-kw">let</span> stops: [<span class="tk-type">String</span>]
+    <span class="tk-kw">var</span> pending = <span class="tk-str">&quot;&quot;</span>
+
+    <span class="tk-kw">public</span> <span class="tk-kw">init</span>(stops: [<span class="tk-type">String</span>]) {
+        <span class="tk-kw">self</span>.stops = stops.filter { !$0.isEmpty }
+    }
+
+    <span class="tk-com">/// Returns text that is safe to emit, and whether a stop string was hit.</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">mutating</span> <span class="tk-kw">func</span> feed(_ text: <span class="tk-type">String</span>) -&gt; (<span class="tk-type">String</span>, stopped: <span class="tk-type">Bool</span>) {
+        pending += text
+        <span class="tk-kw">for</span> stop <span class="tk-kw">in</span> stops {
+            <span class="tk-kw">if</span> <span class="tk-kw">let</span> range = pending.range(of: stop) {
+                <span class="tk-kw">let</span> out = <span class="tk-type">String</span>(pending[..&lt;range.lowerBound])
+                pending = <span class="tk-str">&quot;&quot;</span>
+                <span class="tk-kw">return</span> (out, <span class="tk-kw">true</span>)
+            }
+        }
+        <span class="tk-com">// Keep the longest suffix that is a prefix of some stop string.</span>
+        <span class="tk-kw">var</span> keep = <span class="tk-num">0</span>
+        <span class="tk-kw">for</span> stop <span class="tk-kw">in</span> stops {
+            <span class="tk-kw">for</span> n <span class="tk-kw">in</span> stride(from: min(stop.count - <span class="tk-num">1</span>, pending.count), to: <span class="tk-num">0</span>, by: -<span class="tk-num">1</span>)
+            <span class="tk-kw">where</span> pending.hasSuffix(stop.prefix(n)) {
+                keep = max(keep, n)
+                <span class="tk-kw">break</span>
+            }
+        }
+        <span class="tk-kw">let</span> out = <span class="tk-type">String</span>(pending.dropLast(keep))
+        pending = <span class="tk-type">String</span>(pending.suffix(keep))
+        <span class="tk-kw">return</span> (out, <span class="tk-kw">false</span>)
+    }
+
+    <span class="tk-com">/// Flushes held-back text once generation ends for another reason.</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">mutating</span> <span class="tk-kw">func</span> finish() -&gt; <span class="tk-type">String</span> {
+        <span class="tk-kw">defer</span> { pending = <span class="tk-str">&quot;&quot;</span> }
+        <span class="tk-kw">return</span> pending
+    }
+}</code></pre></div>
+<p>The unit tests in <code>Tests/InferenceTests/TextTests.swift</code> pin both behaviours: <code>"hello E" + "N" + "D tail"</code> with stop <code>"END"</code> emits only <code>"hello "</code>, and <code>"an E" + "xit"</code> releases the held-back <code>"E"</code> once <code>"Ex"</code> rules out <code>"END"</code>. When generation ends for any other reason, the engine calls <code>finish()</code> to flush whatever was held back.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">swift-transformers loads the tokenizer and renders the Jinja chat template stored in the checkpoint. Qwen uses ChatML: each turn is wrapped in <|im_start|>role … <|im_end|>, and a turn ends when the model emits <|im_end|>. Streaming needs care because one token is not one character: decode a window, hold back incomplete characters, and hold back text that could be the start of a stop string.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="2">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Your server renders prompts with a hand-written template that differs from Qwen's by one newline. What happens?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Tokenization fails with an error</button>
+<button type="button" data-opt="1">Nothing; models ignore whitespace</button>
+<button type="button" data-opt="2">The model still runs, but answers get quietly worse because the input no longer matches its training format</button>
+<button type="button" data-opt="3">The server returns HTTP 400</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Nothing checks the format. The model sees an input slightly outside what it was tuned on and degrades without any error, which is why the template from the checkpoint should always be used.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="fill" data-answer="<|im_end|>|im_end||im_end|" data-placeholder="token">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">type the term</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which special token does a Qwen chat model emit to end its turn?</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>ChatML closes every turn with <code>&lt;|im_end|&gt;</code>. <code>&lt;|endoftext|&gt;</code> ends a pretraining document and is kept in the stop set for base models.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>The detokenizer decodes the window and gets text ending in U+FFFD. What should it do?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Send it; the client will fix it</button>
+<button type="button" data-opt="1">Send nothing yet, because the last token ends in the middle of a multi-byte character</button>
+<button type="button" data-opt="2">Drop the token</button>
+<button type="button" data-opt="3">Restart the window</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>U+FFFD at the end means the bytes so far do not complete a character. The next token will, and the full character goes out then.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Stop string <code>"STOP"</code>. The stream so far is <code>"ok ST"</code>. What may be sent to the client right now?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">"ok ST"</button>
+<button type="button" data-opt="1">"ok "</button>
+<button type="button" data-opt="2">nothing</button>
+<button type="button" data-opt="3">"ok S"</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>"ST" is a prefix of "STOP", so it must be held back until the next text shows whether the stop string completes.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why does the chat template append an empty <code>&lt;think&gt;\n\n&lt;/think&gt;</code> when thinking is disabled?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It is a bug in the template</button>
+<button type="button" data-opt="1">It shows the model that the reasoning phase is already over, so it answers directly</button>
+<button type="button" data-opt="2">It reserves cache space</button>
+<button type="button" data-opt="3">It is required by the tokenizer</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Hybrid reasoning models were trained to reason inside think tags. A closed, empty block is the trained signal for "no reasoning, answer now".</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="05-reading-a-checkpoint.html" data-nav-prev>← 5. Reading a checkpoint</a>
+      <a class="btn btn-primary" href="07-implementing-qwen3.html" data-nav-next>7. Implementing Qwen3 →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+
+</body>
+</html>

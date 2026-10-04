@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>13. One GPU, many clients — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l13" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 13 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part III · The server</span>
+      <h1 class="text-4xl leading-tight">13. One GPU, many clients</h1>
+      <p class="lead">Many HTTP requests arrive at once, but the model must run on one thread at a time. Build the serial engine: a dedicated worker thread, a locked inbox, backpressure, and a clear rule for which objects each thread may touch.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Explain why model work belongs on one dedicated thread</li>
+<li>Hand work between threads with a locked queue and a semaphore</li>
+<li>Reject excess load early with a bounded queue</li>
+<li>Reason about Sendable in a server that wraps non-thread-safe libraries</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="why-one-thread" class="scroll-mt-24 text-2xl">Why one thread</h2>
+<div class="prose-block">
+<p>Hummingbird serves each connection on Swift's cooperative thread pool, so dozens of requests can be in flight at once. It is tempting to run the model right there in the route. Three reasons not to:</p>
+<ul>
+<li><strong>The GPU does one thing at a time anyway.</strong> Two forward passes submitted together do not finish faster than one after the other; they just compete. Concurrency at the model level only helps when it is designed in, which is what batching (Lesson 15) does.</li>
+<li><strong>The model is not thread-safe.</strong> Caches are mutated in place, MLX modules are classes, and nothing guards them. Two threads in one forward pass corrupt state silently.</li>
+<li><strong>The cooperative pool must not block.</strong> It has about one thread per CPU core. A route that spends ten seconds generating holds one of them hostage, and a few long requests can stall every other async task in the process, including the HTTP server itself.</li>
+</ul>
+<p>So model work goes to one thread the engine owns, created for that purpose and nothing else.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-serial-engine" class="scroll-mt-24 text-2xl">The serial engine</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Engine.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Runs one request at a time on a dedicated thread.</span>
+<span class="tk-com">///</span>
+<span class="tk-com">/// The GPU can only do one thing at a time anyway, and MLX models are not</span>
+<span class="tk-com">/// thread-safe, so all model work happens on the worker thread. Callers on</span>
+<span class="tk-com">/// any thread hand requests over through a locked inbox and receive tokens</span>
+<span class="tk-com">/// through an `AsyncThrowingStream`.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">final</span> <span class="tk-kw">class</span> <span class="tk-type">SerialEngine</span>: <span class="tk-attr">@unchecked</span> <span class="tk-type">Sendable</span> {
+    <span class="tk-com">// Touched only by the worker thread.</span>
+    <span class="tk-kw">private</span> <span class="tk-kw">let</span> loaded: <span class="tk-type">LoadedModel</span>
+    <span class="tk-kw">private</span> <span class="tk-kw">let</span> promptCache: <span class="tk-type">PromptCache</span>
+    <span class="tk-kw">private</span> <span class="tk-kw">let</span> useMTP: <span class="tk-type">Bool</span>
+
+    <span class="tk-com">// Shared between threads, always behind the lock or the semaphore.</span>
+    <span class="tk-kw">private</span> <span class="tk-kw">let</span> inbox = <span class="tk-type">OSAllocatedUnfairLock</span>&lt;[<span class="tk-type">Job</span>]&gt;(initialState: [])
+    <span class="tk-kw">private</span> <span class="tk-kw">let</span> wake = <span class="tk-type">DispatchSemaphore</span>(value: <span class="tk-num">0</span>)
+    <span class="tk-kw">private</span> <span class="tk-kw">let</span> maxQueue: <span class="tk-type">Int</span>
+
+    <span class="tk-kw">public</span> <span class="tk-kw">init</span>(loaded: <span class="tk-type">LoadedModel</span>, maxQueue: <span class="tk-type">Int</span> = <span class="tk-num">16</span>, useMTP: <span class="tk-type">Bool</span> = <span class="tk-kw">true</span>, promptCacheEntries: <span class="tk-type">Int</span> = <span class="tk-num">4</span>) {
+        <span class="tk-kw">self</span>.loaded = loaded
+        <span class="tk-kw">self</span>.maxQueue = maxQueue
+        <span class="tk-kw">self</span>.useMTP = useMTP
+        <span class="tk-kw">self</span>.promptCache = <span class="tk-type">PromptCache</span>(capacity: promptCacheEntries)
+        <span class="tk-kw">let</span> thread = <span class="tk-type">Thread</span> { [<span class="tk-kw">self</span>] <span class="tk-kw">in</span> <span class="tk-kw">self</span>.run() }
+        thread.name = <span class="tk-str">&quot;inference-worker&quot;</span>
+        thread.stackSize = <span class="tk-num">16</span> &lt;&lt; <span class="tk-num">20</span>
+        thread.start()
+    }
+
+    <span class="tk-com">/// Queues a request. Throws `queueFull` instead of letting the backlog</span>
+    <span class="tk-com">/// grow without bound, so the HTTP layer can answer 429 right away.</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">func</span> submit(_ request: <span class="tk-type">GenerationRequest</span>) <span class="tk-kw">throws</span> -&gt; <span class="tk-type">AsyncThrowingStream</span>&lt;<span class="tk-type">GenerationEvent</span>, <span class="tk-type">Error</span>&gt; {
+        <span class="tk-kw">let</span> (stream, continuation) = <span class="tk-type">AsyncThrowingStream</span>.makeStream(of: <span class="tk-type">GenerationEvent</span>.<span class="tk-kw">self</span>, throwing: <span class="tk-type">Error</span>.<span class="tk-kw">self</span>)
+        <span class="tk-kw">let</span> job = <span class="tk-type">Job</span>(request: request, continuation: continuation)
+        <span class="tk-com">// Fires when the consumer stops listening, e.g. the client disconnects.</span>
+        continuation.onTermination = { _ <span class="tk-kw">in</span> job.cancel() }
+        <span class="tk-kw">try</span> inbox.withLock { queue <span class="tk-kw">in</span>
+            <span class="tk-kw">guard</span> queue.count &lt; maxQueue <span class="tk-kw">else</span> { <span class="tk-kw">throw</span> <span class="tk-type">EngineError</span>.queueFull }
+            queue.append(job)
+        }
+        wake.signal()
+        <span class="tk-kw">return</span> stream
+    }</code></pre></div>
+<p>The worker is a plain <code>Thread</code> with a 16 MB stack. Deep model graphs build deep call stacks, and the default secondary-thread stack of 512 KB is not enough. It runs <code>run()</code> forever:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Engine.swift</span><span>swift</span></div><pre><code><span class="tk-kw">private</span> <span class="tk-kw">func</span> run() {
+    <span class="tk-kw">while</span> <span class="tk-kw">true</span> {
+        wake.wait()
+        <span class="tk-kw">guard</span> <span class="tk-kw">let</span> job = inbox.withLock({ $0.isEmpty ? <span class="tk-kw">nil</span> : $0.removeFirst() }) <span class="tk-kw">else</span> { <span class="tk-kw">continue</span> }
+        <span class="tk-kw">if</span> job.cancelled {
+            job.continuation.finish()
+            <span class="tk-kw">continue</span>
+        }
+        serve(job)
+    }
+}</code></pre></div>
+<p>The hand-off uses two primitives:</p>
+<ul>
+<li><strong>The inbox</strong> is an array behind an <code>OSAllocatedUnfairLock</code>. <code>submit</code>, running on an HTTP thread, appends under the lock; the worker removes the first job under the lock. The lock is held for microseconds, never across model work.</li>
+<li><strong>The semaphore</strong> lets the worker sleep without spinning. Each submit signals it once; each loop iteration waits once. If ten jobs arrive while the worker is busy, the count reaches ten, and the worker runs ten iterations without sleeping.</li>
+</ul>
+<p>A job cancelled while it was still waiting is finished immediately without touching the model.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="backpressure" class="scroll-mt-24 text-2xl">Backpressure</h2>
+<div class="prose-block">
+<p>Without a limit, an overloaded server accepts every request and makes each one wait longer. Clients time out, retry, and make it worse. The inbox therefore has a maximum length (16 by default), and <code>submit</code> throws <code>queueFull</code> beyond it. The route turns that into HTTP 429 "server busy, retry later" at once.</p>
+<p>A fast, honest no is better than a slow failure. Clients and load balancers know what to do with 429: back off, or try another server. The <code>queueDepth</code> property and the <code>qwenserve_rejected_total</code> metric let you see when it happens and size the limit.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="sendable-honestly" class="scroll-mt-24 text-2xl">Sendable, honestly</h2>
+<div class="prose-block">
+<p>Swift 6 checks at compile time that values shared between threads are safe to share (<code>Sendable</code>). MLX arrays and modules are not, and the engine holds them, so the compiler cannot prove the engine safe. The options:</p>
+<ol>
+<li>Make the engine an actor. Actor methods run on the cooperative pool, which brings back the blocking problem above, unless you give the actor a custom executor.</li>
+<li>Mark the engine <code>@unchecked Sendable</code> and enforce a rule by design.</li>
+</ol>
+<p>The engine takes option 2, and the rule is written in the code: the model, the prompt cache and the generators are touched only by the worker thread; everything shared (the inbox, the semaphore, each job's cancelled flag) is protected by a lock or is itself thread-safe. <code>@unchecked</code> is not a way to silence the compiler; it moves the proof from the compiler to you, so the proof has to be short enough to check by reading.</p>
+<p>The same reasoning gives <code>PromptFormatter</code>, which renders chat templates on HTTP threads. The tokenizer is not documented as thread-safe, so every call goes through a lock:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/LoadedModel.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Renders chat prompts from request handlers on any thread. The tokenizer</span>
+<span class="tk-com">/// is not documented as thread-safe, so calls go through a lock.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">final</span> <span class="tk-kw">class</span> <span class="tk-type">PromptFormatter</span>: <span class="tk-attr">@unchecked</span> <span class="tk-type">Sendable</span> {
+    <span class="tk-kw">private</span> <span class="tk-kw">let</span> loaded: <span class="tk-type">LoadedModel</span>
+    <span class="tk-kw">private</span> <span class="tk-kw">let</span> lock = <span class="tk-type">NSLock</span>()
+
+    <span class="tk-kw">public</span> <span class="tk-kw">init</span>(_ loaded: <span class="tk-type">LoadedModel</span>) {
+        <span class="tk-kw">self</span>.loaded = loaded
+    }
+
+    <span class="tk-kw">public</span> <span class="tk-kw">func</span> render(
+        messages: [[<span class="tk-type">String</span>: <span class="tk-kw">any</span> <span class="tk-type">Sendable</span>]], tools: [[<span class="tk-type">String</span>: <span class="tk-kw">any</span> <span class="tk-type">Sendable</span>]]?, enableThinking: <span class="tk-type">Bool</span>
+    ) <span class="tk-kw">throws</span> -&gt; [<span class="tk-type">Int</span>] {
+        <span class="tk-kw">try</span> lock.withLock { <span class="tk-kw">try</span> loaded.prompt(messages: messages, tools: tools, enableThinking: enableThinking) }
+    }
+}</code></pre></div>
+<p>Rendering takes well under a millisecond, so the lock never becomes a bottleneck, and the worker never renders templates, so it never waits on HTTP threads.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="one-request-at-a-time" class="scroll-mt-24 text-2xl">One request at a time</h2>
+<div class="prose-block">
+<p>This engine serves requests strictly one after another. While one request decodes, the others wait in the inbox. For a personal server that is often exactly right: each request gets the full speed of the machine, and speculative decoding (Lesson 19) makes that speed higher still.</p>
+<p>Under load it is wasteful. Lesson 2 showed that a decode step is limited by reading the weights, so a step that served eight sequences would cost little more than one serving a single sequence. Before exploiting that, the next lesson removes work entirely by not prefilling the same prompt twice.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">All MLX work happens on one dedicated worker thread, because the GPU serializes the work anyway and the model objects are not thread-safe. Requests cross from HTTP threads to the worker through an inbox protected by a lock, with a semaphore to wake the worker. The inbox is bounded, so overload becomes a fast 429 instead of an ever-growing wait. Objects only the worker touches are marked @unchecked Sendable with that rule written next to them.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why not run generation directly inside the async route handler?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Hummingbird forbids long routes</button>
+<button type="button" data-opt="1">It blocks a cooperative-pool thread for the whole generation and lets requests touch the non-thread-safe model concurrently</button>
+<button type="button" data-opt="2">Async code cannot use the GPU</button>
+<button type="button" data-opt="3">It would be faster, but harder to read</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Long blocking work starves the cooperative pool, and concurrent forward passes corrupt shared model state.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Ten requests arrive while the worker is busy. How many times will the worker's <code>wake.wait()</code> return without sleeping once it finishes?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Once</button>
+<button type="button" data-opt="1">Ten times</button>
+<button type="button" data-opt="2">Never</button>
+<button type="button" data-opt="3">It depends on the lock</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Each submit signals the semaphore once, so its count is ten. Each wait consumes one.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What does a bounded inbox give clients under overload?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Faster generation</button>
+<button type="button" data-opt="1">An immediate 429 they can act on, instead of an ever-longer wait that ends in a timeout</button>
+<button type="button" data-opt="2">Priority for long prompts</button>
+<button type="button" data-opt="3">Lower memory use in the model</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Backpressure turns overload into a fast, explicit signal.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="multi" data-answer="0,1,3">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which objects may HTTP threads touch in this design? Select all that apply.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">The inbox, under its lock</button>
+<button type="button" data-opt="1">A job's cancelled flag</button>
+<button type="button" data-opt="2">The model's KV caches</button>
+<button type="button" data-opt="3">The PromptFormatter</button>
+<button type="button" data-opt="4">The prompt cache</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Shared state is limited to locked or thread-safe objects. The caches and the prompt cache belong to the worker alone.</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="12-streaming-and-cancellation.html" data-nav-prev>← 12. Streaming and cancellation</a>
+      <a class="btn btn-primary" href="14-prompt-caching.html" data-nav-next>14. Prompt caching →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+
+</body>
+</html>

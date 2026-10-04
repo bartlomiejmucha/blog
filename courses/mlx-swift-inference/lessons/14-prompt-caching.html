@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>14. Prompt caching — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l14" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 14 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part III · The server</span>
+      <h1 class="text-4xl leading-tight">14. Prompt caching</h1>
+      <p class="lead">The second turn of a chat repeats the whole first turn. Keep the caches of recent requests and skip prefilling what the server has already seen, and learn why where you take the snapshot matters as much as how you match it.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Explain when cached state from one request can be reused by another</li>
+<li>Copy caches safely so stored entries are never mutated</li>
+<li>Find why naive end-of-reply caching misses for Qwen3.5, and fix it</li>
+<li>Measure the effect on time to first token</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="the-opportunity" class="scroll-mt-24 text-2xl">The opportunity</h2>
+<div class="prose-block">
+<p>A chat client sends the whole conversation every time. Turn 3 of a conversation with a long system prompt contains the system prompt, turn 1, the reply to it, turn 2, the reply to that, and the new message. Without caching, the server prefills all of it again, and time to first token grows with every turn.</p>
+<p>But the caches after prefilling a prompt depend only on its tokens. If the server kept the caches from turn 2, turn 3 would only need to prefill what is new. The same works for many requests that share a long system prompt.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="storing-and-finding-entries" class="scroll-mt-24 text-2xl">Storing and finding entries</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/PromptCache.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Keeps the caches of recent requests so a follow-up that starts with the</span>
+<span class="tk-com">/// same tokens (the next turn of a chat, a shared system prompt) skips</span>
+<span class="tk-com">/// prefilling them.</span>
+<span class="tk-com">///</span>
+<span class="tk-com">/// Matching is on whole entries: an entry is used only if all of its</span>
+<span class="tk-com">/// tokens are a prefix of the new prompt. Attention caches could be trimmed</span>
+<span class="tk-com">/// to a shorter common prefix, but linear-attention state cannot, so this</span>
+<span class="tk-com">/// rule works for both kinds of layer.</span>
+<span class="tk-com">///</span>
+<span class="tk-com">/// What to store matters as much as how to match. Chat templates often</span>
+<span class="tk-com">/// re-render earlier turns differently from how they were generated (Qwen3.5</span>
+<span class="tk-com">/// drops the empty think block from past answers), so the state at the end</span>
+<span class="tk-com">/// of a reply rarely matches the next prompt. The engine instead stores the</span>
+<span class="tk-com">/// state at the start of the last `&lt;|im_start|&gt;` in the prompt: everything</span>
+<span class="tk-com">/// before it is history that the next turn repeats verbatim.</span>
+<span class="tk-kw">final</span> <span class="tk-kw">class</span> <span class="tk-type">PromptCache</span> {
+    <span class="tk-kw">struct</span> <span class="tk-type">Entry</span> {
+        <span class="tk-kw">var</span> tokens: [<span class="tk-type">Int</span>]
+        <span class="tk-kw">var</span> caches: [<span class="tk-type">LayerCache</span>]
+    }
+
+    <span class="tk-kw">let</span> capacity: <span class="tk-type">Int</span>
+    <span class="tk-kw">private</span> <span class="tk-kw">var</span> entries: [<span class="tk-type">Entry</span>] = []   <span class="tk-com">// most recently used last</span>
+
+    <span class="tk-kw">init</span>(capacity: <span class="tk-type">Int</span>) {
+        <span class="tk-kw">self</span>.capacity = capacity
+    }
+
+    <span class="tk-com">/// Returns caches to start from and how many prompt tokens they cover.</span>
+    <span class="tk-com">/// At least one prompt token is always left to run, because generation</span>
+    <span class="tk-com">/// needs the logits of the last prompt position.</span>
+    <span class="tk-kw">func</span> lookup(prompt: [<span class="tk-type">Int</span>], model: <span class="tk-kw">any</span> <span class="tk-type">LanguageModel</span>) -&gt; (caches: [<span class="tk-type">LayerCache</span>], count: <span class="tk-type">Int</span>) {
+        <span class="tk-kw">let</span> best = entries.indices
+            .filter { entries[$0].tokens.count &lt; prompt.count &amp;&amp; prompt.starts(with: entries[$0].tokens) }
+            .max { entries[$0].tokens.count &lt; entries[$1].tokens.count }
+        <span class="tk-kw">guard</span> <span class="tk-kw">let</span> index = best, capacity &gt; <span class="tk-num">0</span> <span class="tk-kw">else</span> { <span class="tk-kw">return</span> (model.makeCaches(), <span class="tk-num">0</span>) }
+
+        <span class="tk-kw">let</span> entry = entries.remove(at: index)
+        entries.append(entry)
+        <span class="tk-kw">return</span> (entry.caches.map { $0.copy() }, entry.tokens.count)
+    }
+
+    <span class="tk-kw">func</span> store(tokens: [<span class="tk-type">Int</span>], caches: [<span class="tk-type">LayerCache</span>]) {
+        <span class="tk-kw">guard</span> capacity &gt; <span class="tk-num">0</span>, caches.first?.offset == tokens.count <span class="tk-kw">else</span> { <span class="tk-kw">return</span> }
+        <span class="tk-com">// A new entry supersedes any entry it extends.</span>
+        entries.removeAll { tokens.starts(with: $0.tokens) }
+        entries.append(<span class="tk-type">Entry</span>(tokens: tokens, caches: caches))
+        <span class="tk-kw">if</span> entries.count &gt; capacity { entries.removeFirst() }
+    }
+}</code></pre></div>
+<p>Each entry is a token list and the caches that hold exactly those tokens. <code>lookup</code> picks the longest entry whose tokens are a prefix of the new prompt and leaves at least one prompt token to run, because generation needs the logits of the last prompt position. <code>store</code> drops entries that the new one extends and evicts the least recently used entry beyond a fixed capacity (4 by default). A production server would budget by bytes instead of by count, since entries for long prompts can be hundreds of megabytes.</p>
+<p>Why whole entries only? With attention caches you could reuse a <em>partial</em> match by trimming the cache back to the common prefix. Qwen3.5's linear-attention layers keep a running state that cannot be rewound to an arbitrary earlier position (Lesson 17). Requiring the whole entry to match works for both kinds of layer.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="copies-not-references" class="scroll-mt-24 text-2xl">Copies, not references</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/PromptCache.swift</span><span>swift</span></div><pre><code><span class="tk-kw">extension</span> <span class="tk-type">KVCache</span> {
+    <span class="tk-com">/// An independent copy. `update` writes into the key and value buffers</span>
+    <span class="tk-com">/// in place, so a stored cache must never be handed out directly.</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">func</span> copy() -&gt; <span class="tk-type">LayerCache</span> {
+        <span class="tk-kw">let</span> c = <span class="tk-type">KVCache</span>()
+        <span class="tk-kw">if</span> <span class="tk-kw">let</span> keys, <span class="tk-kw">let</span> values {
+            c.keys = keys[.ellipsis, ..&lt;offset, <span class="tk-num">0</span>...]
+            c.values = values[.ellipsis, ..&lt;offset, <span class="tk-num">0</span>...]
+        }
+        c.offset = offset
+        <span class="tk-kw">return</span> c
+    }
+}</code></pre></div>
+<p>The KV cache from Lesson 9 writes new keys into its buffer in place. Hand a stored entry's cache to a new request, and that request's generated tokens overwrite the stored state: the next request that matches the entry gets corrupted keys. So <code>lookup</code> returns copies. Slicing out the filled part creates new arrays, and the next update allocates a fresh buffer.</p>
+<p>The linear-attention cache needs no deep copy, because its update replaces the state arrays instead of writing into them. Sharing references to arrays nobody mutates is safe. The difference is one of those details that only shows up as a rare, baffling bug if you get it wrong.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-first-attempt-missed" class="scroll-mt-24 text-2xl">The first attempt missed</h2>
+<div class="prose-block">
+<p>The obvious design stores the caches after each request finishes, covering the prompt and the generated reply, so that the next turn, which starts with exactly that conversation, hits. Implemented that way and tested with a three-turn Qwen3.5 conversation, it hit <strong>zero</strong> times.</p>
+<p>The reason is in the chat template. Render the same conversation before and after a turn:</p>
+<div class="code-block"><pre><code>turn 1 prompt:   ...&lt;|im_start|&gt;user\nWhat is MLX?&lt;|im_end|&gt;\n&lt;|im_start|&gt;assistant\n&lt;think&gt;\n\n&lt;/think&gt;\n\n
+turn 2 prompt:   ...&lt;|im_start|&gt;user\nWhat is MLX?&lt;|im_end|&gt;\n&lt;|im_start|&gt;assistant\nAn array framework.&lt;|im_end|&gt;\n&lt;|im_start|&gt;user\n...</code></pre></div>
+<p>When generating, the prompt ends with an empty think block. When the same reply appears as history in the next turn, the template leaves the think block out. So the tokens the caches hold after turn 1 are <em>not</em> a prefix of turn 2's prompt, and they never will be. Templates that strip reasoning from past turns are common, and even without that, re-tokenizing a reply does not always reproduce the exact tokens that were generated.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="snapshot-where-history-ends" class="scroll-mt-24 text-2xl">Snapshot where history ends</h2>
+<div class="prose-block">
+<p>The fix is to snapshot the caches at a point the next turn is guaranteed to repeat: the start of the last <code>&lt;|im_start|&gt;</code> in the prompt. Everything before it is earlier turns plus the newest user message, all rendered from history; everything after it is the generation prompt, which changes. The generator already supports this: it ends a prefill chunk exactly at the checkpoint and copies the caches there.</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Generator.swift</span><span>swift</span></div><pre><code><span class="tk-kw">while</span> rest.count &gt; <span class="tk-num">1</span> {
+    <span class="tk-kw">var</span> size = <span class="tk-type">Swift</span>.min(prefillStep, rest.count - <span class="tk-num">1</span>)
+    <span class="tk-com">// End a chunk exactly at the checkpoint so the caches can be copied there.</span>
+    <span class="tk-kw">if</span> <span class="tk-kw">let</span> checkpoint, rest.startIndex &lt; checkpoint {
+        size = <span class="tk-type">Swift</span>.min(size, checkpoint - rest.startIndex)
+    }
+    <span class="tk-kw">let</span> chunk = rest.prefix(size)
+    _ = model(<span class="tk-type">MLXArray</span>(chunk.map(<span class="tk-type">Int32</span>.<span class="tk-kw">init</span>)).reshaped(<span class="tk-num">1</span>, -<span class="tk-num">1</span>), caches: <span class="tk-kw">self</span>.caches)
+    eval(<span class="tk-kw">self</span>.caches.flatMap(\.state))
+    rest = rest.dropFirst(chunk.count)
+    <span class="tk-kw">if</span> rest.startIndex == checkpoint {
+        checkpointCaches = <span class="tk-kw">self</span>.caches.map { $0.copy() }
+    }
+}</code></pre></div>
+<p>The engine picks the checkpoint, prefills from the best cache hit, and stores the snapshot afterwards:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Engine.swift</span><span>swift</span></div><pre><code><span class="tk-com">// Reuse the caches of an earlier request whose tokens are a prefix</span>
+<span class="tk-com">// of this prompt, and only prefill the rest.</span>
+<span class="tk-kw">let</span> hit = promptCache.lookup(prompt: request.prompt, model: loaded.model)
+cached = hit.count
+checkpoint = request.prompt.lastIndex(of: loaded.turnStartToken ?? -<span class="tk-num">1</span>).flatMap {
+    $0 &gt; cached ? $0 : <span class="tk-kw">nil</span>
+}
+plain = <span class="tk-type">TokenGenerator</span>(
+    model: loaded.model, prompt: <span class="tk-type">Array</span>(request.prompt[cached...]),
+    parameters: request.parameters, maxTokens: request.maxTokens, caches: hit.caches,
+    checkpoint: checkpoint.map { $0 - cached })</code></pre></div><div class="code-block"><div class="code-title"><span>code/Sources/Inference/Engine.swift</span><span>swift</span></div><pre><code><span class="tk-kw">if</span> <span class="tk-kw">let</span> checkpoint, <span class="tk-kw">let</span> caches = plain?.checkpointCaches {
+    promptCache.store(tokens: <span class="tk-type">Array</span>(request.prompt[..&lt;checkpoint]), caches: caches)
+}</code></pre></div>
+<p>With this change, the same three-turn conversation with a 1,500-token system prompt on Qwen3.5-0.8B:</p>
+<div class="code-block"><pre><code>turn 1: 3.25 s   prompt 1573 tokens, cached    0
+turn 2: 0.97 s   prompt 1622 tokens, cached 1566
+turn 3: 0.93 s   prompt 1669 tokens, cached 1615</code></pre></div>
+<p>Each later turn prefills only about 55 new tokens. The cached count appears in the response as <code>usage.prompt_tokens_details.cached_tokens</code>, so clients can see it too.</p>
+<div class="note note-warn"><p class="text-sm"><strong>A limitation to know.</strong> The MTP generator of Lesson 19 keeps a second cache for its drafting head, which this prompt cache does not store. So the serial engine uses the prompt cache only when MTP is off (<code>--no-mtp</code>), and MTP requests prefill from scratch. That is a real trade-off: long multi-turn chats favour the prompt cache, short prompts with long answers favour MTP. Extending the cache entries to carry the drafter's cache is a good exercise once you have read Lesson 19.</p></div>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">If an earlier request's tokens are a prefix of a new prompt, its caches already hold the state for that prefix, and only the rest needs prefilling. Store copies, because attention caches are written in place. Matching needs whole-entry prefixes, since linear-attention state cannot be trimmed. And store the snapshot at the last <|im_start|> of the prompt, not at the end of the reply: chat templates re-render past replies differently from how they were generated.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why must <code>lookup</code> return copies of the stored caches?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">To save memory</button>
+<button type="button" data-opt="1">The KV cache writes new tokens into its buffer in place, so the request would overwrite the stored state</button>
+<button type="button" data-opt="2">MLX arrays cannot be shared</button>
+<button type="button" data-opt="3">Copies are faster to read</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Without copies, the first request to use an entry corrupts it for every later request.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why does caching the state at the end of each reply never hit with Qwen3.5's template?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">The cache is too small</button>
+<button type="button" data-opt="1">The template renders past replies without the empty think block, so the generated token sequence is not a prefix of the next prompt</button>
+<button type="button" data-opt="2">Qwen3.5 has no KV cache</button>
+<button type="button" data-opt="3">Replies are too long</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>The next prompt differs from the stored tokens right where the reply starts. The fix is to snapshot at a point the template repeats verbatim.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="numeric" data-answer="56" data-tolerance="0" data-placeholder="tokens">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>An entry covers 1,566 tokens and the new prompt has 1,622. How many tokens must be prefilled?</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>1,622 − 1,566 = 56. The last of them produces the logits for the first generated token.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why does the cache only match whole entries rather than the longest common prefix?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It is simpler to code</button>
+<button type="button" data-opt="1">Linear-attention state cannot be rewound to an arbitrary earlier position, so a partial match is unusable for Qwen3.5</button>
+<button type="button" data-opt="2">Partial matches are always slower</button>
+<button type="button" data-opt="3">The tokenizer forbids it</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Attention caches can be trimmed; a running recurrent state cannot. Whole-entry matching works for both.</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="13-one-gpu-many-clients.html" data-nav-prev>← 13. One GPU, many clients</a>
+      <a class="btn btn-primary" href="15-continuous-batching.html" data-nav-next>15. Continuous batching →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+
+</body>
+</html>

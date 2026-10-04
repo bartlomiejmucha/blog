@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>12. Streaming and cancellation — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l12" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 12 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part III · The server</span>
+      <h1 class="text-4xl leading-tight">12. Streaming and cancellation</h1>
+      <p class="lead">Send each piece of text the moment it exists with server-sent events, and stop generating the instant a client goes away so the GPU is never wasted on nobody.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Write a server-sent event stream in the Chat Completions chunk format</li>
+<li>Connect the engine's AsyncThrowingStream to the HTTP response body</li>
+<li>Propagate a client disconnect back to the worker as cancellation</li>
+<li>Explain why cancellation is a throughput feature, not a nicety</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="server-sent-events" class="scroll-mt-24 text-2xl">Server-sent events</h2>
+<div class="prose-block">
+<p>Streaming in the OpenAI API uses <strong>server-sent events</strong> (SSE), the simplest streaming format on the web: a long-lived HTTP response with content type <code>text/event-stream</code>, made of lines starting with <code>data: </code>, each event followed by a blank line.</p>
+<div class="code-block"><pre><code>data: {&quot;id&quot;:&quot;chatcmpl-1&quot;,&quot;object&quot;:&quot;chat.completion.chunk&quot;,&quot;choices&quot;:[{&quot;index&quot;:0,&quot;delta&quot;:{&quot;role&quot;:&quot;assistant&quot;}}]}
+
+data: {&quot;id&quot;:&quot;chatcmpl-1&quot;,&quot;object&quot;:&quot;chat.completion.chunk&quot;,&quot;choices&quot;:[{&quot;index&quot;:0,&quot;delta&quot;:{&quot;content&quot;:&quot;Here&quot;}}]}
+
+data: {&quot;id&quot;:&quot;chatcmpl-1&quot;,&quot;object&quot;:&quot;chat.completion.chunk&quot;,&quot;choices&quot;:[{&quot;index&quot;:0,&quot;delta&quot;:{&quot;content&quot;:&quot; is&quot;}}]}
+
+data: {&quot;id&quot;:&quot;chatcmpl-1&quot;,&quot;object&quot;:&quot;chat.completion.chunk&quot;,&quot;choices&quot;:[{&quot;index&quot;:0,&quot;delta&quot;:{},&quot;finish_reason&quot;:&quot;stop&quot;}],&quot;usage&quot;:{...}}
+
+data: [DONE]</code></pre></div>
+<p>The first chunk carries the role, each following chunk a <code>delta</code> with new content, the last one the finish reason (and, in this server, the token usage), and <code>[DONE]</code> closes the stream. Clients concatenate the deltas.</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/serve/OpenAI.swift</span><span>swift</span></div><pre><code><span class="tk-kw">struct</span> <span class="tk-type">ChatChunk</span>: <span class="tk-type">Encodable</span> {
+    <span class="tk-kw">struct</span> <span class="tk-type">Delta</span>: <span class="tk-type">Encodable</span> {
+        <span class="tk-kw">var</span> role: <span class="tk-type">String</span>?
+        <span class="tk-kw">var</span> content: <span class="tk-type">String</span>?
+        <span class="tk-kw">var</span> toolCalls: [<span class="tk-type">ToolCallBody</span>]?
+    }
+    <span class="tk-kw">struct</span> <span class="tk-type">Choice</span>: <span class="tk-type">Encodable</span> {
+        <span class="tk-kw">var</span> index = <span class="tk-num">0</span>
+        <span class="tk-kw">var</span> delta: <span class="tk-type">Delta</span>
+        <span class="tk-kw">var</span> finishReason: <span class="tk-type">String</span>?
+    }
+    <span class="tk-kw">var</span> id: <span class="tk-type">String</span>
+    <span class="tk-kw">var</span> object = <span class="tk-str">&quot;chat.completion.chunk&quot;</span>
+    <span class="tk-kw">var</span> created: <span class="tk-type">Int</span>
+    <span class="tk-kw">var</span> model: <span class="tk-type">String</span>
+    <span class="tk-kw">var</span> choices: [<span class="tk-type">Choice</span>]
+    <span class="tk-kw">var</span> usage: <span class="tk-type">UsageBody</span>?
+}</code></pre></div>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="writing-the-stream" class="scroll-mt-24 text-2xl">Writing the stream</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/serve/main.swift</span><span>swift</span></div><pre><code><span class="tk-kw">if</span> chat.stream == <span class="tk-kw">true</span> {
+    <span class="tk-kw">return</span> <span class="tk-type">Response</span>(
+        status: .ok,
+        headers: [.contentType: <span class="tk-str">&quot;text/event-stream&quot;</span>, .cacheControl: <span class="tk-str">&quot;no-cache&quot;</span>],
+        body: <span class="tk-type">ResponseBody</span> { writer <span class="tk-kw">in</span>
+            <span class="tk-kw">func</span> send(_ chunk: <span class="tk-type">ChatChunk</span>) <span class="tk-kw">async</span> <span class="tk-kw">throws</span> {
+                <span class="tk-kw">let</span> data = <span class="tk-kw">try</span> jsonEncoder.encode(chunk)
+                <span class="tk-kw">try</span> <span class="tk-kw">await</span> writer.write(<span class="tk-type">ByteBuffer</span>(string: <span class="tk-str">&quot;data: &quot;</span> + <span class="tk-type">String</span>(decoding: data, <span class="tk-kw">as</span>: <span class="tk-type">UTF8</span>.<span class="tk-kw">self</span>) + <span class="tk-str">&quot;\n\n&quot;</span>))
+            }
+            <span class="tk-kw">try</span> <span class="tk-kw">await</span> send(<span class="tk-type">ChatChunk</span>(id: id, created: created, model: modelName,
+                                     choices: [.<span class="tk-kw">init</span>(delta: .<span class="tk-kw">init</span>(role: <span class="tk-str">&quot;assistant&quot;</span>))]))
+            <span class="tk-com">// Text streams through until a tool call starts. From there it</span>
+            <span class="tk-com">// is buffered and sent as one structured delta at the end.</span>
+            <span class="tk-kw">var</span> buffered = <span class="tk-str">&quot;&quot;</span>
+            <span class="tk-com">// If the client disconnects, the write throws, this loop ends,</span>
+            <span class="tk-com">// and the stream&#x27;s onTermination cancels the job in the engine.</span>
+            <span class="tk-kw">for</span> <span class="tk-kw">try</span> <span class="tk-kw">await</span> event <span class="tk-kw">in</span> events {
+                <span class="tk-kw">switch</span> event {
+                <span class="tk-kw">case</span> .text(<span class="tk-kw">let</span> text):
+                    <span class="tk-kw">if</span> expectTools &amp;&amp; (!buffered.isEmpty || text.contains(<span class="tk-str">&quot;&lt;&quot;</span>)) {
+                        buffered += text
+                        <span class="tk-com">// Release text once it is clearly not the start of a call.</span>
+                        <span class="tk-kw">if</span> !buffered.contains(<span class="tk-type">ToolCallParser</span>.openTag)
+                            &amp;&amp; !<span class="tk-type">ToolCallParser</span>.openTag.hasPrefix(buffered.suffix(from: buffered.lastIndex(of: <span class="tk-str">&quot;&lt;&quot;</span>) ?? buffered.startIndex)) {
+                            <span class="tk-kw">try</span> <span class="tk-kw">await</span> send(<span class="tk-type">ChatChunk</span>(id: id, created: created, model: modelName,
+                                                     choices: [.<span class="tk-kw">init</span>(delta: .<span class="tk-kw">init</span>(content: buffered))]))
+                            buffered = <span class="tk-str">&quot;&quot;</span>
+                        }
+                    } <span class="tk-kw">else</span> {
+                        <span class="tk-kw">try</span> <span class="tk-kw">await</span> send(<span class="tk-type">ChatChunk</span>(id: id, created: created, model: modelName,
+                                                 choices: [.<span class="tk-kw">init</span>(delta: .<span class="tk-kw">init</span>(content: text))]))
+                    }
+                <span class="tk-kw">case</span> .finished(<span class="tk-kw">let</span> reason, <span class="tk-kw">let</span> usage):
+                    <span class="tk-kw">let</span> (content, calls) = <span class="tk-type">ToolCallParser</span>.parse(buffered)
+                    <span class="tk-kw">if</span> !calls.isEmpty {
+                        <span class="tk-kw">try</span> <span class="tk-kw">await</span> send(<span class="tk-type">ChatChunk</span>(id: id, created: created, model: modelName,
+                                                 choices: [.<span class="tk-kw">init</span>(delta: .<span class="tk-kw">init</span>(content: content.isEmpty ? <span class="tk-kw">nil</span> : content,
+                                                                              toolCalls: toolCallBodies(calls)))]))
+                    } <span class="tk-kw">else</span> <span class="tk-kw">if</span> !buffered.isEmpty {
+                        <span class="tk-kw">try</span> <span class="tk-kw">await</span> send(<span class="tk-type">ChatChunk</span>(id: id, created: created, model: modelName,
+                                                 choices: [.<span class="tk-kw">init</span>(delta: .<span class="tk-kw">init</span>(content: buffered))]))
+                    }
+                    <span class="tk-kw">try</span> <span class="tk-kw">await</span> send(<span class="tk-type">ChatChunk</span>(id: id, created: created, model: modelName,
+                                             choices: [.<span class="tk-kw">init</span>(delta: .<span class="tk-kw">init</span>(),
+                                                             finishReason: calls.isEmpty ? reason.rawValue : <span class="tk-str">&quot;tool_calls&quot;</span>)],
+                                             usage: usageBody(usage)))
+                }
+            }
+            <span class="tk-kw">try</span> <span class="tk-kw">await</span> writer.write(<span class="tk-type">ByteBuffer</span>(string: <span class="tk-str">&quot;data: [DONE]\n\n&quot;</span>))
+            <span class="tk-kw">try</span> <span class="tk-kw">await</span> writer.finish(<span class="tk-kw">nil</span>)
+        })</code></pre></div>
+<p><code>ResponseBody { writer in ... }</code> hands the route a writer for the response body. Hummingbird sends the headers right away and keeps the connection open while the closure runs. Inside, the route iterates the engine's event stream with <code>for try await</code> and writes one SSE chunk per event. Each <code>write</code> goes out to the socket as soon as it is called, so the client sees each token within milliseconds of the worker producing it.</p>
+<p>The <code>buffered</code> logic in the middle holds text back once it might be the start of a tool call, so tool calls go out as one structured chunk. Lesson 21 explains it; without tools, every text event goes straight through.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-bridge-asyncthrowingstream" class="scroll-mt-24 text-2xl">The bridge: AsyncThrowingStream</h2>
+<div class="prose-block">
+<p>The worker is an ordinary thread producing tokens in a loop. The HTTP route is async Swift code. <code>AsyncThrowingStream</code> connects them:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Engine.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Queues a request. Throws `queueFull` instead of letting the backlog</span>
+<span class="tk-com">/// grow without bound, so the HTTP layer can answer 429 right away.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">func</span> submit(_ request: <span class="tk-type">GenerationRequest</span>) <span class="tk-kw">throws</span> -&gt; <span class="tk-type">AsyncThrowingStream</span>&lt;<span class="tk-type">GenerationEvent</span>, <span class="tk-type">Error</span>&gt; {
+    <span class="tk-kw">let</span> (stream, continuation) = <span class="tk-type">AsyncThrowingStream</span>.makeStream(of: <span class="tk-type">GenerationEvent</span>.<span class="tk-kw">self</span>, throwing: <span class="tk-type">Error</span>.<span class="tk-kw">self</span>)
+    <span class="tk-kw">let</span> job = <span class="tk-type">Job</span>(request: request, continuation: continuation)
+    <span class="tk-com">// Fires when the consumer stops listening, e.g. the client disconnects.</span>
+    continuation.onTermination = { _ <span class="tk-kw">in</span> job.cancel() }
+    <span class="tk-kw">try</span> inbox.withLock { queue <span class="tk-kw">in</span>
+        <span class="tk-kw">guard</span> queue.count &lt; maxQueue <span class="tk-kw">else</span> { <span class="tk-kw">throw</span> <span class="tk-type">EngineError</span>.queueFull }
+        queue.append(job)
+    }
+    wake.signal()
+    <span class="tk-kw">return</span> stream
+}</code></pre></div>
+
+<p><code>makeStream</code> returns the stream, which the route consumes, and its continuation, which the worker keeps. The worker calls <code>continuation.yield(.text(...))</code> for each piece and <code>finish()</code> at the end; these calls are thread-safe, so the worker thread never has to touch Swift concurrency. Events are buffered until the consumer reads them, so a slow client does not slow the worker.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="cancellation" class="scroll-mt-24 text-2xl">Cancellation</h2>
+<div class="prose-block">
+<p>The most important line in <code>submit</code> is this one:</p>
+<div class="code-block"><pre><code>continuation.onTermination = { _ <span class="tk-kw">in</span> job.cancel() }</code></pre></div>
+<p>Follow what happens when a user closes the browser tab halfway through a long answer:</p>
+<ol>
+<li>The next <code>writer.write</code> in the route throws, because the socket is gone.</li>
+<li>The error ends the <code>for try await</code> loop, and the stream's consumer goes away.</li>
+<li>The stream terminates and calls <code>onTermination</code>, which sets the job's cancelled flag.</li>
+<li>The worker checks the flag after every token and stops:</li>
+</ol>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Engine.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// A request waiting for, or being served by, the worker.</span>
+<span class="tk-kw">final</span> <span class="tk-kw">class</span> <span class="tk-type">Job</span>: <span class="tk-type">Sendable</span> {
+    <span class="tk-kw">let</span> request: <span class="tk-type">GenerationRequest</span>
+    <span class="tk-kw">let</span> continuation: <span class="tk-type">AsyncThrowingStream</span>&lt;<span class="tk-type">GenerationEvent</span>, <span class="tk-type">Error</span>&gt;.<span class="tk-type">Continuation</span>
+    <span class="tk-kw">private</span> <span class="tk-kw">let</span> cancelledFlag = <span class="tk-type">OSAllocatedUnfairLock</span>(initialState: <span class="tk-kw">false</span>)
+
+    <span class="tk-kw">init</span>(request: <span class="tk-type">GenerationRequest</span>, continuation: <span class="tk-type">AsyncThrowingStream</span>&lt;<span class="tk-type">GenerationEvent</span>, <span class="tk-type">Error</span>&gt;.<span class="tk-type">Continuation</span>) {
+        <span class="tk-kw">self</span>.request = request
+        <span class="tk-kw">self</span>.continuation = continuation
+    }
+
+    <span class="tk-kw">var</span> cancelled: <span class="tk-type">Bool</span> { cancelledFlag.withLock { $0 } }
+    <span class="tk-kw">func</span> cancel() { cancelledFlag.withLock { $0 = <span class="tk-kw">true</span> } }
+}</code></pre></div>
+<p>The flag is behind an <code>OSAllocatedUnfairLock</code>, so setting it from an HTTP thread and reading it from the worker is safe. Checking once per token costs nothing measurable.</p>
+<p>Why this matters: without it, an abandoned 2,000-token request keeps the GPU busy for half a minute, and every queued request waits behind it. In the finished server, a request sent one second after a client disconnected mid-stream from such a request was answered in 0.2 seconds. Cancellation is a throughput feature.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">A streamed response is a sequence of 'data: {json}' lines separated by blank lines, ending with 'data: [DONE]'. Hummingbird's ResponseBody gives the route a writer; the route loops over the engine's event stream and writes one chunk per text piece. When the client disconnects, the write throws, the loop ends, the stream terminates, and its onTermination handler flips the job's cancelled flag, which the worker checks after every token.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>How does an SSE client know where one event ends?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Each event has a length header</button>
+<button type="button" data-opt="1">A blank line follows each event</button>
+<button type="button" data-opt="2">Events are fixed-size</button>
+<button type="button" data-opt="3">The connection closes after each event</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>SSE is line-based: one or more <code>data:</code> lines, then an empty line.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="order">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">put in order</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A client disconnects mid-stream. Order what happens next.</p></div>
+<div class="space-y-2" data-ex-order>
+<div data-item="0"><span>The route's next write throws</span></div>
+<div data-item="1"><span>The for-await loop over events ends</span></div>
+<div data-item="2"><span>The stream terminates and calls onTermination</span></div>
+<div data-item="3"><span>The job's cancelled flag is set</span></div>
+<div data-item="4"><span>The worker sees the flag after the current token and stops</span></div>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>The disconnect is noticed on the next write; termination of the stream is the hand-off point between HTTP and the engine.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why can the worker thread call <code>continuation.yield</code> without being part of Swift concurrency?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It cannot; it must be an actor</button>
+<button type="button" data-opt="1">The continuation is thread-safe and buffers events until the async consumer reads them</button>
+<button type="button" data-opt="2">yield blocks until the client reads</button>
+<button type="button" data-opt="3">Hummingbird runs on the worker thread</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>AsyncStream continuations are designed to be fed from any thread, which makes them the standard bridge from callback or thread-based code to async code.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Without cancellation, what is the main cost of a client that disconnects early?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">A memory leak in Hummingbird</button>
+<button type="button" data-opt="1">The worker keeps generating for nobody, and every queued request waits behind it</button>
+<button type="button" data-opt="2">The model's weights get corrupted</button>
+<button type="button" data-opt="3">The client is charged twice</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>The single GPU worker is the scarcest resource. Wasting it delays everyone else.</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="11-an-openai-compatible-api-with-hummingbird.html" data-nav-prev>← 11. An OpenAI-compatible API with Hummingbird</a>
+      <a class="btn btn-primary" href="13-one-gpu-many-clients.html" data-nav-next>13. One GPU, many clients →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+
+</body>
+</html>

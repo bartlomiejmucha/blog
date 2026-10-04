@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>8. Loading weights and proving parity — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l08" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 8 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part II · Running Qwen</span>
+      <h1 class="text-4xl leading-tight">8. Loading weights and proving parity</h1>
+      <p class="lead">A model that loads and produces fluent text can still be wrong. Prove yours matches the reference, learn what agreement in bfloat16 actually looks like, and how to find the first layer that disagrees.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Set up a pinned Python reference to compare against</li>
+<li>Decide what counts as a match when both sides compute in bfloat16</li>
+<li>Bisect a mismatch down to the first layer and operation that differs</li>
+<li>Recognize a greedy-decoding near-tie and tell it apart from a bug</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="why-text-is-not-enough" class="scroll-mt-24 text-2xl">Why text is not enough</h2>
+<div class="prose-block">
+<p>Get the RoPE base wrong, swap two projections, or forget QK-norm, and a 0.6B model often still writes grammatical English. It is just a slightly worse model, and you might not notice for weeks. The only reliable check is numerical: run the same input through your implementation and through a trusted one, and compare the <strong>logits</strong>, the raw scores for every vocabulary entry at every position.</p>
+<p>The trusted implementation here is Python's <code>mlx-lm</code>, which runs on the same MLX core. Pin it to the same core version as the Swift package. <code>mlx-swift</code> 0.32.3 bundles MLX 0.32.2, so:</p>
+<div class="code-block"><pre><code>uv venv ref &amp;&amp; VIRTUAL_ENV=ref uv pip install &quot;mlx==0.32.2&quot; &quot;mlx-metal==0.32.2&quot; mlx-lm
+ref/bin/python - &lt;&lt;&#x27;PY&#x27;
+import mlx.core as mx
+from mlx_lm import load
+model, _ = load(&quot;mlx-community/Qwen3-0.6B-4bit&quot;)
+ids = mx.array([[9707, 11, 1246, 525, 498, 30, 358, 1079]])   # same ids as infer&#x27;s logits mode
+mx.save_safetensors(&quot;python.safetensors&quot;, {&quot;logits&quot;: model(ids).astype(mx.float32)})
+PY</code></pre></div>
+<p>On the Swift side, the <code>infer</code> tool has a mode that writes logits for a fixed prompt to a file:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/infer/main.swift</span><span>swift</span></div><pre><code><span class="tk-kw">if</span> mode == <span class="tk-str">&quot;logits&quot;</span> {
+    <span class="tk-com">// Raw logits for a fixed prompt, for comparison with the Python reference.</span>
+    <span class="tk-kw">let</span> loaded = <span class="tk-kw">try</span> <span class="tk-kw">await</span> <span class="tk-type">LoadedModel</span>.load(directory: directory, quantizeBits: <span class="tk-kw">nil</span>)
+    <span class="tk-kw">let</span> ids = <span class="tk-type">MLXArray</span>([<span class="tk-num">9707</span>, <span class="tk-num">11</span>, <span class="tk-num">1246</span>, <span class="tk-num">525</span>, <span class="tk-num">498</span>, <span class="tk-num">30</span>, <span class="tk-num">358</span>, <span class="tk-num">1079</span>] <span class="tk-kw">as</span> [<span class="tk-type">Int32</span>]).reshaped(<span class="tk-num">1</span>, -<span class="tk-num">1</span>)
+    <span class="tk-kw">try</span> save(arrays: [<span class="tk-str">&quot;logits&quot;</span>: loaded.model(ids, caches: <span class="tk-kw">nil</span>).asType(.float32)], url: <span class="tk-type">URL</span>(filePath: <span class="tk-type">CommandLine</span>.arguments[<span class="tk-num">4</span>]))
+    exit(<span class="tk-num">0</span>)
+}</code></pre></div>
+<p>Then load both files in Python and compare position by position.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="what-a-match-looks-like" class="scroll-mt-24 text-2xl">What a match looks like</h2>
+<div class="prose-block">
+<p>The very first comparison made for this course, Qwen3-0.6B at 4 bits on the four tokens of <code>&lt;|im_start|&gt;user
+Hello</code>, gave:</p>
+<div class="code-block"><pre><code>position          0      1       2       3
+max |Δ logit|     0      0.69    0.34    0.39      (logits reach about 16)
+argmax agrees     yes    yes     yes     yes</code></pre></div>
+<p>Is that a pass? Position 0 is exact, every position picks the same top token, and the differences are a few bfloat16 steps. A logit near 16 has a bfloat16 step of 0.125, so 0.69 is about five steps. That is the signature of the same computation with operations rounded in a slightly different order somewhere, not of a wrong computation. A real bug looks very different: large differences from the first position on, or a different top token at most positions.</p>
+<p>But "looks like rounding" is a hypothesis, and position 0 being exact is a useful clue: at position 0 a token attends only to itself, so whatever differs must involve mixing information across positions. That narrows the search to attention.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="bisecting-a-difference" class="scroll-mt-24 text-2xl">Bisecting a difference</h2>
+<div class="prose-block">
+<p>The method is simple: dump the hidden state after every layer from both implementations, and find the first layer where they differ. A temporary debug function in Swift saved each layer's output; the Python side looped over <code>model.model.layers</code> the same way. The result:</p>
+<div class="code-block"><pre><code>layer   max |Δ|    max |h|
+0       0          7.4
+1       0          12.6
+2       0          7968       ← the residual stream gets large here
+3       0          7968
+4       0.0078     7968       ← first difference: one bf16 step, inside attention
+5       0.031      7968
+...
+27      3.9        5120</code></pre></div>
+<p>Layers 0 to 3 are bit-identical. The first difference is one bfloat16 step in layer 4's attention output at a single position, and from there it spreads and grows, because each layer adds to the residual stream and a value of 8,000 has a bfloat16 step of 32. By layer 27 the absolute difference is 3.9, which is still smaller than one step at that magnitude.</p>
+<p>Zooming in further, each of the fast kernels involved (RoPE and fused attention) was run alone on the same inputs in Swift and Python, and matched bit for bit. Fusing <code>silu(gate) * up</code> to match Python's compiled <code>swiglu</code> changed nothing. So the remaining difference is below the level of our code: the same Metal source, compiled by a different Metal compiler for the Swift build than for the Python wheel, can round one value differently on particular inputs. You can stop here. The implementation is correct, and you now know the tolerance to expect.</p>
+<div class="note"><p class="text-sm"><strong>The general lesson.</strong> Treat "matches to the last digit" as unattainable across builds, and "same top token everywhere, differences of a few steps at the logit's magnitude, exact where no cross-position mixing happens" as the pass condition. Then test it on more than one prompt.</p></div>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="greedy-near-ties" class="scroll-mt-24 text-2xl">Greedy near-ties</h2>
+<div class="prose-block">
+<p>The other comparison is end-to-end: generate 200 tokens greedily (always the top token) in both implementations. With the prompt "Why is the sky blue?", the first 35 tokens are identical, then they part ways. Is that a bug?</p>
+<p>Check the logits at the divergence point:</p>
+<div class="code-block"><pre><code>top candidates at token 35:   &quot; all&quot; 21.875    &quot; a&quot; 21.75    &quot; various&quot; 21.75
+Python chose &quot; all&quot;; Swift chose &quot; a&quot;</code></pre></div>
+<p>The top two are 0.125 apart, exactly one bfloat16 step at that magnitude. A one-step difference anywhere upstream is enough to flip that choice, and after the flip the two texts continue from different prefixes, so they diverge completely. This is expected behaviour, and you will see it again in Lesson 15 (batched decoding) and Lesson 19 (speculative decoding), where a different kernel shape changes the rounding. The test is always the same: at the first divergent token, are the top two logits within a step or two? If yes, it is a near-tie; if no, it is a bug.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="turn-it-into-tests" class="scroll-mt-24 text-2xl">Turn it into tests</h2>
+<div class="prose-block">
+<p>Comparisons against Python are a development tool; you do not want Python in your test suite. What you can keep is <strong>self-consistency</strong> tests that encode the same tolerance. For example, decoding several prompts as one batch must match decoding each alone:</p>
+<div class="code-block"><div class="code-title"><span>code/Tests/InferenceTests/BatchTests.swift</span><span>swift</span></div><pre><code><span class="tk-kw">func</span> batchedDecodeMatchesSerial(_ which: <span class="tk-type">String</span>) <span class="tk-kw">throws</span> {
+    <span class="tk-kw">let</span> found = which == <span class="tk-str">&quot;qwen3&quot;</span> ? <span class="tk-type">TestModels</span>.qwen3 : <span class="tk-type">TestModels</span>.qwen35
+    <span class="tk-kw">try</span> <span class="tk-attr">#require</span>(found != <span class="tk-kw">nil</span>, <span class="tk-str">&quot;model weights for \(which) not found&quot;</span>)
+    <span class="tk-kw">let</span> dir = found!
+    <span class="tk-kw">let</span> model: <span class="tk-kw">any</span> <span class="tk-type">LanguageModel</span> = which == <span class="tk-str">&quot;qwen3&quot;</span> ? <span class="tk-kw">try</span> loadQwen3(from: dir) : <span class="tk-kw">try</span> loadQwen35(from: dir, withMTP: <span class="tk-kw">false</span>)
+    <span class="tk-kw">let</span> prompts: [[<span class="tk-type">Int</span>]] = [[<span class="tk-num">9707</span>, <span class="tk-num">11</span>, <span class="tk-num">1246</span>, <span class="tk-num">525</span>], [<span class="tk-num">785</span>, <span class="tk-num">6722</span>, <span class="tk-num">315</span>, <span class="tk-num">9625</span>, <span class="tk-num">374</span>], [<span class="tk-num">16</span>, <span class="tk-num">11</span>, <span class="tk-num">17</span>, <span class="tk-num">11</span>, <span class="tk-num">18</span>, <span class="tk-num">11</span>]]
+    <span class="tk-kw">let</span> steps = <span class="tk-num">24</span>
+
+    <span class="tk-com">// Serial reference: logits for each step of each prompt.</span>
+    <span class="tk-kw">var</span> serial = [[<span class="tk-type">MLXArray</span>]]()
+    <span class="tk-kw">for</span> p <span class="tk-kw">in</span> prompts {
+        <span class="tk-kw">let</span> caches = model.makeCaches()
+        <span class="tk-kw">var</span> logits = model(<span class="tk-type">MLXArray</span>(p.map(<span class="tk-type">Int32</span>.<span class="tk-kw">init</span>)).reshaped(<span class="tk-num">1</span>, -<span class="tk-num">1</span>), caches: caches)[<span class="tk-num">0</span>..., -<span class="tk-num">1</span>, <span class="tk-num">0</span>...]
+        <span class="tk-kw">var</span> rows = [logits]
+        <span class="tk-kw">for</span> _ <span class="tk-kw">in</span> <span class="tk-num">1</span> ..&lt; steps {
+            <span class="tk-kw">let</span> t = argMax(logits, axis: -<span class="tk-num">1</span>).reshaped(<span class="tk-num">1</span>, <span class="tk-num">1</span>)
+            logits = model(t, caches: caches)[<span class="tk-num">0</span>..., -<span class="tk-num">1</span>, <span class="tk-num">0</span>...]
+            rows.append(logits)
+        }
+        eval(rows)
+        serial.append(rows)
+    }</code></pre></div>
+<p>The full test then decodes the same prompts in a batch and requires every logit to be within 1.0 of the serial run, for both Qwen3 and Qwen3.5. It runs in about 8 seconds. The model-backed tests look for the checkpoints in the Hugging Face cache, or in paths given by environment variables, and fail with a clear message if the weights are missing.</p>
+<p>The same method checked every architecture in this course against the reference before any lesson was written: Qwen3 (above), Qwen3.5 (same top token at every position, differences up to 0.58 at logits around 23), and the mixture-of-experts variants in Lesson 16.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">Compare logits, not text. Pin the reference to the same MLX core version. In bfloat16, expect exact agreement for the first position and last-digit differences elsewhere, with the same top token everywhere. When logits differ more than that, compare layer by layer to find the first divergence. When greedy output diverges after many identical tokens, check whether the top two logits were within one bfloat16 step.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="numeric" data-answer="0.125" data-tolerance="0.0001" data-placeholder="step">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>bfloat16 has 8 bits of precision (7 stored plus 1 implicit). What is the gap between adjacent bfloat16 values just above 16? (Hint: between 16 and 32 there are 128 values.)</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>16 / 128 = 0.125. Between 2<sup>n</sup> and 2<sup>n+1</sup> there are 128 evenly spaced values, so the step is 2<sup>n</sup> / 128.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="2">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Your logits match exactly at position 0 and differ by a few bfloat16 steps elsewhere, with the same argmax everywhere. Where would a real bug most likely be, if there is one?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">The embedding table</button>
+<button type="button" data-opt="1">The final norm</button>
+<button type="button" data-opt="2">Something that mixes positions, such as attention or RoPE</button>
+<button type="button" data-opt="3">The tokenizer</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Position 0 attends only to itself and RoPE at position 0 is the identity. Everything per-position is therefore verified; only cross-position computation is left.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Greedy outputs are identical for 120 tokens and then diverge. At the divergence, the reference's top two logits are 18.50 and 12.25. What does this suggest?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">A near-tie; nothing to worry about</button>
+<button type="button" data-opt="1">A genuine bug: a 6-point gap cannot flip through rounding</button>
+<button type="button" data-opt="2">The tokenizer differs</button>
+<button type="button" data-opt="3">The sampler is random</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Rounding moves logits by a step or two (0.0625 to 0.125 here). A gap of 6.25 means the two implementations computed materially different things at that point, for example a cache or position bug that only appears at long context.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why pin the Python reference to the same MLX core version as the Swift package?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Different versions cannot load the same checkpoint</button>
+<button type="button" data-opt="1">Kernel changes between versions can shift numbers by a few steps, which would hide or mimic real differences</button>
+<button type="button" data-opt="2">Newer versions are slower</button>
+<button type="button" data-opt="3">mlx-lm requires it</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>You want the comparison to isolate your code. Version drift adds its own small differences.</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="07-implementing-qwen3.html" data-nav-prev>← 7. Implementing Qwen3</a>
+      <a class="btn btn-primary" href="09-the-generation-loop-and-the-kv-cache.html" data-nav-next>9. The generation loop and the KV cache →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+
+</body>
+</html>

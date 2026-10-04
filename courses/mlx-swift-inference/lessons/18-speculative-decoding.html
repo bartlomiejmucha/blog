@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>18. Speculative decoding — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l18" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 18 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part IV · Advanced</span>
+      <h1 class="text-4xl leading-tight">18. Speculative decoding</h1>
+      <p class="lead">Guess several tokens cheaply, then check them all with one pass of the real model. Learn the acceptance rule that keeps output exactly as good as normal decoding, and the cost model that says when it actually speeds things up.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Explain draft-then-verify and why verification is nearly free when decode is bandwidth-bound</li>
+<li>Apply the greedy acceptance rule</li>
+<li>Apply rejection sampling so sampled output keeps the target model's distribution</li>
+<li>Predict the speed-up from acceptance rate and relative costs</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="the-idea" class="scroll-mt-24 text-2xl">The idea</h2>
+<div class="prose-block">
+<p>Lesson 2's table again: a single-sequence decode step barely uses the GPU's arithmetic. Running the model on 2 or 3 tokens instead of 1 reads the same weights and, ideally, costs about the same. Prefill already exploits this. Can decode?</p>
+<p>The obstacle is that decode is sequential: token <em>n+1</em> depends on token <em>n</em>. <strong>Speculative decoding</strong> gets around it by guessing:</p>
+<ol>
+<li>A cheap <strong>drafter</strong> proposes the next token, or the next few.</li>
+<li>The real model, the <strong>target</strong>, runs once on the last committed token followed by the drafts. Because a transformer produces logits at every position, this one pass gives the target's prediction after each draft as well.</li>
+<li>Compare: keep the drafts the target agrees with, plus one token from the target itself at the first disagreement or after the last draft.</li>
+</ol>
+<p>Every step emits at least one token, the same one normal decoding would have produced, and sometimes more. The drafter can be a small separate model, a lookup in the prompt, or, in Qwen3.5's case, a tiny head built into the model itself (next lesson).</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="greedy-acceptance" class="scroll-mt-24 text-2xl">Greedy acceptance</h2>
+<div class="prose-block">
+<p>With greedy decoding the rule is simple. Suppose the last committed token is <code>t</code> and the drafter proposes <code>d</code>. The target runs on <code>[t, d]</code> and returns two sets of logits:</p>
+<ul>
+<li>at position 0: what should follow <code>t</code>. Call its argmax <code>a₀</code>.</li>
+<li>at position 1: what should follow <code>d</code>. Call its argmax <code>a₁</code>.</li>
+</ul>
+<p>If <code>a₀ = d</code>, the draft was right: emit <code>d</code> and also <code>a₁</code>, two tokens for one pass. If not, emit <code>a₀</code>, which is what plain greedy decoding would have chosen, and discard everything computed for <code>d</code>, including its entries in the caches.</p>
+<p>The output is identical to plain greedy decoding, in principle token for token. In practice the two-token pass uses a different kernel shape than the one-token pass, so a near-tie can occasionally flip (Lesson 8). Lesson 19 shows exactly such a case.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="sampling-without-changing-the-distribution" class="scroll-mt-24 text-2xl">Sampling without changing the distribution</h2>
+<div class="prose-block">
+<p>With temperature above zero, "is the draft right?" has no yes/no answer. Let <code>q</code> be the drafter's distribution and <code>p</code> the target's, both after the same temperature and truncation (that is why the sampler in Lesson 10 exposes <code>logProbabilities</code>). The draft <code>d</code> was drawn from <code>q</code>. Then:</p>
+<ol>
+<li>Accept <code>d</code> with probability <code>min(1, p(d) / q(d))</code>.</li>
+<li>If rejected, draw a replacement from the leftover distribution <code>max(0, p − q)</code>, normalized.</li>
+</ol>
+<p>Why this is exact: the chance of ending with token <em>x</em> is the chance it was drafted and accepted, <code>q(x) · min(1, p(x)/q(x)) = min(q(x), p(x))</code>, plus the chance of a rejection times the leftover's probability for <em>x</em>. The total rejection probability is <code>1 − Σ min(p, q) = Σ max(0, p − q)</code>, which is exactly the normalizer of the leftover, so the second term is <code>max(0, p(x) − q(x))</code>. Adding them, <code>min(q, p) + max(0, p − q) = p(x)</code>. The output is distributed exactly as if the target had sampled alone. Where the drafter overestimates a token, some of its drafts are rejected; where it underestimates one, the leftover makes up the difference.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="when-it-is-faster" class="scroll-mt-24 text-2xl">When it is faster</h2>
+<div class="prose-block">
+<p>Let <code>α</code> be the acceptance rate with one draft per step. Each step then emits <code>1 + α</code> tokens on average. Measure costs in units of one normal decode step:</p>
+<ul>
+<li><code>c_verify</code>: the target pass on 2 tokens. Ideally about 1, if the step really is bandwidth-bound.</li>
+<li><code>c_draft</code>: producing the draft.</li>
+</ul>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">speed-up = (1 + α) / (c_verify + c_draft)</p>
+<p>With α = 0.9, c_verify = 1.0 and c_draft = 0.15, the speed-up is 1.9 / 1.15 ≈ 1.65. But if the 2-token pass costs 1.4 normal steps, it drops to 1.9 / 1.55 ≈ 1.23, and at 2.2 the "speed-up" is a slowdown. <strong>c_verify is the number that decides everything</strong>, and Lesson 15 already measured that it depends on the matmul kernel and the weight precision. Explore the trade-off below.</p>
+<p>With <em>k</em> drafts per step, the expected tokens per step become <code>(1 − α^(k+1)) / (1 − α)</code>, but c_verify and c_draft grow with k too. Drafters that are only trained to look one token ahead, like Qwen3.5's, use k = 1.</p>
+</div>
+<div class="figure" id="viz-speculative"><p class="figure-title">Speculative decoding speed-up</p><p class="figure-sub">Set the acceptance rate and the relative costs, or load one of the configurations measured on the M1 in Lesson 19.</p></div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">A cheap drafter proposes tokens; the target model scores the last committed token plus the drafts in one pass. Greedy: accept a draft if it equals the target's choice. Sampling: accept draft d with probability min(1, p(d)/q(d)), otherwise draw from the normalized leftover max(0, p − q); this yields exactly the target distribution. With acceptance rate α and one draft per step, each step emits 1 + α tokens on average, and the speed-up is (1 + α) divided by the cost of a verify step plus a draft, in units of a normal step.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="2">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Greedy speculative step: committed token t, draft d. The target's argmax after t is d, and after d it is e. What is emitted?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">d</button>
+<button type="button" data-opt="1">e</button>
+<button type="button" data-opt="2">d then e</button>
+<button type="button" data-opt="3">t then d</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>The draft is confirmed, and the second position's prediction comes free from the same pass.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="numeric" data-answer="0.4" data-tolerance="0.001" data-placeholder="probability">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>q(d) = 0.5 and p(d) = 0.2. With what probability is the draft accepted?</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>min(1, 0.2 / 0.5) = 0.4.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="numeric" data-answer="1.29" data-tolerance="0.006" data-placeholder="×">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>α = 0.8, c_verify = 1.2, c_draft = 0.2. What is the speed-up? (Two decimals.)</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>(1 + 0.8) / (1.2 + 0.2) = 1.8 / 1.4 ≈ 1.29.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why must the drafter and the target use the same temperature and truncation for rejection sampling?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Otherwise the code crashes</button>
+<button type="button" data-opt="1">p and q must be the distributions the tokens are actually drawn from; otherwise the acceptance rule no longer reproduces the target's sampling distribution</button>
+<button type="button" data-opt="2">It makes drafts faster</button>
+<button type="button" data-opt="3">It is only a convention</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>The exactness argument relies on q being the drafting distribution and p the distribution plain sampling would use.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which single quantity most often decides whether speculative decoding helps on a given machine?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Vocabulary size</button>
+<button type="button" data-opt="1">The cost of the multi-token verify pass relative to a normal step</button>
+<button type="button" data-opt="2">The tokenizer</button>
+<button type="button" data-opt="3">The prompt length</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Acceptance rates of 0.8 to 0.9 are common. Whether the verify pass is really almost free is what varies between hardware, kernels and precisions.</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="17-qwen3-5-s-hybrid-architecture.html" data-nav-prev>← 17. Qwen3.5's hybrid architecture</a>
+      <a class="btn btn-primary" href="19-mtp-qwen3-5-s-built-in-drafter.html" data-nav-next>19. MTP: Qwen3.5's built-in drafter →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l18.js" defer></script>
+</body>
+</html>

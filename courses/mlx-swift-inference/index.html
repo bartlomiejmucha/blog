@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Qwen inference in Swift — a build-along course</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="assets/js/course.js" defer></script>
+<script src="assets/js/app.js" defer></script>
+</head>
+<body class="min-h-screen">
+<header class="border-b border-ink-800">
+  <div class="wrap-wide flex items-center justify-between py-4">
+    <div class="flex items-center gap-3">
+      <a href="../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+      <span class="font-mono text-sm text-ink-300">Qwen inference in Swift</span>
+    </div>
+    <div class="flex items-center gap-3">
+      <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+      <span class="pill font-mono">21 lessons</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap-wide space-y-10 py-12">
+  <section class="space-y-5">
+    <h1 class="text-5xl leading-tight">Build a Qwen inference server in Swift with MLX</h1>
+    <p class="lead max-w-2xl">A step-by-step engineering course. You start with an empty Swift package and end with an OpenAI-compatible server that runs Qwen3 and Qwen3.5 on Apple Silicon: your own model code, KV and linear-attention caches, streaming, continuous batching, prompt caching, mixture-of-experts, and speculative decoding with Qwen3.5's built-in multi-token-prediction head. Every listing comes from a companion package that compiles and was tested against the Python reference.</p>
+    <div class="flex flex-wrap items-center gap-3">
+      <a class="btn btn-primary" data-resume href="lessons/01-what-an-inference-server-does.html">Start the course</a>
+      <a class="btn" href="#map">See the full map</a>
+      <a class="btn" href="qwenserve-src.zip">Download the code</a>
+    </div>
+    <div class="note"><p class="text-sm"><strong>AI-generated content.</strong> The lessons, diagrams and exercises in this course were generated with AI. They have been reviewed, but may still contain mistakes — check anything important against primary sources.</p></div>
+    <div class="card space-y-3">
+      <div class="flex items-center justify-between text-sm">
+        <span class="font-semibold text-ink-100">Your progress</span>
+        <span class="font-mono text-xs text-ink-400" data-course-stat></span>
+      </div>
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+      <div class="flex flex-wrap items-center gap-2 pt-1">
+        <button class="btn btn-sm" data-export>Export progress</button>
+        <label class="btn btn-sm cursor-pointer">Import<input type="file" accept="application/json" class="hidden" data-import></label>
+        <button class="btn btn-sm" data-reset>Reset</button>
+        <span class="text-xs text-ink-600">Saved in this browser's local storage.</span>
+      </div>
+    </div>
+  </section>
+
+  <section id="map" class="scroll-mt-8 space-y-4">
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-lesson-grid></div>
+  </section>
+
+  <section class="card space-y-3">
+    <h2 class="text-xl">How to use this course</h2>
+    <div class="prose-block text-sm">
+      <ul>
+        <li>Go in order. Each lesson builds on the code of the previous one.</li>
+        <li>You need a Mac with Apple Silicon, Xcode 16 or newer, and about 4 GB of free disk for models and build products. Everything was measured on an M1 with 8 GB of memory, so any Apple Silicon Mac is enough.</li>
+        <li>Download the companion package and build it as you read. Each listing names the file it comes from.</li>
+        <li>Play with every diagram before reading past it. Move the sliders, break things, watch what changes.</li>
+        <li>Do the exercises with the text hidden if you can. Retry as often as you like.</li>
+        <li>Mark a lesson read when you finish it. Progress lives in local storage on this device, so use Export if you want to move it.</li>
+        <li>The ◐ button in the header cycles the theme: follow your system, force light, force dark.</li>
+      </ul>
+    </div>
+  </section>
+</main>
+</body>
+</html>

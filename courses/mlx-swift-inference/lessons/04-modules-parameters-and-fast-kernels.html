@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>4. Modules, parameters and fast kernels — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l04" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 4 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part I · Foundations</span>
+      <h1 class="text-4xl leading-tight">4. Modules, parameters and fast kernels</h1>
+      <p class="lead">Neural network code in MLX is a tree of modules whose parameter names match the checkpoint. Learn that tree, quantized layers, compile, the fused fast kernels, and how to write your own Metal kernel.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Write an MLXNN module whose parameter names match a checkpoint</li>
+<li>Load weights with update(parameters:verify:) and know what verify catches</li>
+<li>Describe what a QuantizedLinear stores</li>
+<li>Use compile to fuse elementwise work</li>
+<li>Use the fast RMSNorm, RoPE and attention kernels, and write a custom Metal kernel</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="modules-are-named-trees" class="scroll-mt-24 text-2xl">Modules are named trees</h2>
+<div class="prose-block">
+<p>A model is a tree of <code>Module</code> objects. Each one owns parameters (arrays) and child modules. The key fact for an inference engine is that <strong>the dotted path of every parameter is its name in the checkpoint</strong>.</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/mlx-basics/main.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// A tiny two-layer network. Property keys are the names checkpoints use.</span>
+<span class="tk-kw">final</span> <span class="tk-kw">class</span> <span class="tk-type">TinyMLP</span>: <span class="tk-type">Module</span>, <span class="tk-type">UnaryLayer</span> {
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;up_proj&quot;</span>) <span class="tk-kw">var</span> up: <span class="tk-type">Linear</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;down_proj&quot;</span>) <span class="tk-kw">var</span> down: <span class="tk-type">Linear</span>
+
+    <span class="tk-kw">init</span>(dims: <span class="tk-type">Int</span>, hidden: <span class="tk-type">Int</span>) {
+        _up.wrappedValue = <span class="tk-type">Linear</span>(dims, hidden, bias: <span class="tk-kw">false</span>)
+        _down.wrappedValue = <span class="tk-type">Linear</span>(hidden, dims, bias: <span class="tk-kw">false</span>)
+    }
+
+    <span class="tk-kw">func</span> callAsFunction(_ x: <span class="tk-type">MLXArray</span>) -&gt; <span class="tk-type">MLXArray</span> {
+        down(silu(up(x)))
+    }
+}</code></pre></div>
+<p><code>@ModuleInfo(key: "up_proj")</code> says: this child appears as <code>up_proj</code> in the parameter tree. The Swift property can have any name you like (<code>up</code>), but the key must match the checkpoint exactly. Qwen's real MLP is the same shape with three projections, and its parameters are called <code>model.layers.3.mlp.up_proj.weight</code> because the module tree nests: model → layers → index 3 → mlp → up_proj → weight.</p>
+<p>Implement <code>callAsFunction</code> and the module can be called like a function. Conforming to <code>UnaryLayer</code> (one array in, one array out) lets you store different implementations behind one property, which Lesson 16 uses to swap a dense MLP for a mixture-of-experts layer.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="loading-weights" class="scroll-mt-24 text-2xl">Loading weights</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/mlx-basics/main.swift</span><span>swift</span></div><pre><code><span class="tk-kw">func</span> modulesAndParameters() <span class="tk-kw">throws</span> {
+    <span class="tk-kw">let</span> mlp = <span class="tk-type">TinyMLP</span>(dims: <span class="tk-num">8</span>, hidden: <span class="tk-num">32</span>)
+    <span class="tk-kw">for</span> (name, array) <span class="tk-kw">in</span> mlp.parameters().flattened() {
+        print(name, array.shape)          <span class="tk-com">// down_proj.weight [8, 32], up_proj.weight [32, 8]</span>
+    }
+    <span class="tk-com">// Loading weights is a dictionary update keyed by those names.</span>
+    <span class="tk-kw">let</span> weights: [<span class="tk-type">String</span>: <span class="tk-type">MLXArray</span>] = [
+        <span class="tk-str">&quot;up_proj.weight&quot;</span>: <span class="tk-type">MLXArray</span>.zeros([<span class="tk-num">32</span>, <span class="tk-num">8</span>]),
+        <span class="tk-str">&quot;down_proj.weight&quot;</span>: <span class="tk-type">MLXArray</span>.zeros([<span class="tk-num">8</span>, <span class="tk-num">32</span>]),
+    ]
+    <span class="tk-kw">try</span> mlp.update(parameters: <span class="tk-type">ModuleParameters</span>.unflattened(weights), verify: [.all])
+    print(mlp(<span class="tk-type">MLXArray</span>.ones([<span class="tk-num">1</span>, <span class="tk-num">8</span>])).sum().item(<span class="tk-type">Float</span>.<span class="tk-kw">self</span>))  <span class="tk-com">// 0.0</span>
+}</code></pre></div>
+<p><code>parameters().flattened()</code> lists the tree as <code>(path, array)</code> pairs. Loading is the reverse: build a flat <code>[String: MLXArray]</code> dictionary, turn it into a tree with <code>ModuleParameters.unflattened</code>, and <code>update</code> the module.</p>
+<p>Always pass <code>verify: [.all]</code>. It throws if the dictionary has a key the model lacks, if the model has a parameter the dictionary lacks, or if a shape does not match. Without it, a typo in a key silently leaves that layer with its initial values, and the model produces fluent-looking garbage that is very hard to debug. With it, the first run tells you exactly which name is wrong.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="quantized-layers" class="scroll-mt-24 text-2xl">Quantized layers</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/mlx-basics/main.swift</span><span>swift</span></div><pre><code><span class="tk-kw">func</span> quantizedLinear() {
+    <span class="tk-kw">let</span> linear = <span class="tk-type">Linear</span>(<span class="tk-num">256</span>, <span class="tk-num">512</span>, bias: <span class="tk-kw">false</span>)
+    <span class="tk-kw">let</span> q = <span class="tk-type">QuantizedLinear</span>(linear, groupSize: <span class="tk-num">64</span>, bits: <span class="tk-num">4</span>)
+    print(q.weight.shape, q.weight.dtype)  <span class="tk-com">// [512, 32] uint32: 8 four-bit values per word</span>
+    print(q.scales.shape)                  <span class="tk-com">// [512, 4]: one scale per group of 64</span>
+    <span class="tk-kw">let</span> x = <span class="tk-type">MLXArray</span>.ones([<span class="tk-num">1</span>, <span class="tk-num">256</span>])
+    <span class="tk-kw">let</span> error = abs(q(x) - linear(x)).max().item(<span class="tk-type">Float</span>.<span class="tk-kw">self</span>)
+    print(<span class="tk-str">&quot;max error from 4-bit:&quot;</span>, error)
+}</code></pre></div>
+<p>A <code>QuantizedLinear</code> stores the same matrix in three arrays:</p>
+<ul>
+<li><code>weight</code>: 4-bit integers packed eight to a <code>UInt32</code>, so a 512×256 matrix becomes 512×32 words;</li>
+<li><code>scales</code> and <code>biases</code>: one of each per group of 64 consecutive weights in a row, in bfloat16.</li>
+</ul>
+<p>Each real weight is reconstructed as <code>scale × q + bias</code>, with <code>q</code> an integer from 0 to 15. The fast kernels never rebuild the full matrix: they unpack, scale and multiply in registers as they stream the packed weights from memory. That is the whole point, because Lesson 2 showed that the bytes read are the cost. Lesson 5 covers the format in detail.</p>
+<p>The module-level <code>quantize(model:filter:)</code> function walks a model and replaces every <code>Linear</code> and <code>Embedding</code> the filter accepts with its quantized version. Our loaders use it to match a pre-quantized checkpoint, or to quantize a full-precision one while loading.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="compile-fusing-elementwise-work" class="scroll-mt-24 text-2xl">compile: fusing elementwise work</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/mlx-basics/main.swift</span><span>swift</span></div><pre><code><span class="tk-kw">func</span> compiledFunctions() {
+    <span class="tk-com">// Elementwise steps run as separate kernels, each one reading and</span>
+    <span class="tk-com">// writing the whole array...</span>
+    <span class="tk-kw">let</span> gate = <span class="tk-type">MLXRandom</span>.normal([<span class="tk-num">1</span>, <span class="tk-num">4096</span>]).asType(.bfloat16)
+    <span class="tk-kw">let</span> up = <span class="tk-type">MLXRandom</span>.normal([<span class="tk-num">1</span>, <span class="tk-num">4096</span>]).asType(.bfloat16)
+    <span class="tk-kw">let</span> plain = silu(gate) * up
+    <span class="tk-com">// ...compile() traces the function once and fuses them into one kernel.</span>
+    <span class="tk-kw">let</span> fused = compile(shapeless: <span class="tk-kw">true</span>) { (g: <span class="tk-type">MLXArray</span>, u: <span class="tk-type">MLXArray</span>) <span class="tk-kw">in</span> silu(g) * u }
+    <span class="tk-kw">let</span> diff = abs(plain.asType(.float32) - fused(gate, up).asType(.float32)).max()
+    print(<span class="tk-str">&quot;max difference:&quot;</span>, diff.item(<span class="tk-type">Float</span>.<span class="tk-kw">self</span>))   <span class="tk-com">// 0.0: same math, fewer memory round trips</span>
+}</code></pre></div>
+<p>Each MLX operation normally becomes its own GPU kernel, which reads its inputs from memory and writes its output back. For elementwise chains like <code>silu(gate) * up</code>, that means several full passes over the data. <code>compile</code> traces the function once and emits a single fused kernel, which reads each input once and writes once. <code>shapeless: true</code> lets one compiled function serve every input shape, which matters because sequence lengths change all the time.</p>
+<p>The model code in this course compiles exactly this <code>swiglu</code> function, matching the Python reference. Compilation is a performance tool here: the fused and unfused results are identical in this example.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-fast-kernels" class="scroll-mt-24 text-2xl">The fast kernels</h2>
+<div class="prose-block">
+<p>Three operations dominate a transformer layer apart from the matrix multiplies, and MLX ships hand-written Metal kernels for each:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/mlx-basics/main.swift</span><span>swift</span></div><pre><code><span class="tk-kw">func</span> fastKernels() {
+    <span class="tk-kw">let</span> x = <span class="tk-type">MLXRandom</span>.normal([<span class="tk-num">1</span>, <span class="tk-num">8</span>, <span class="tk-num">16</span>, <span class="tk-num">64</span>])          <span class="tk-com">// [batch, heads, tokens, headDim]</span>
+    <span class="tk-kw">let</span> w = <span class="tk-type">MLXArray</span>.ones([<span class="tk-num">64</span>])
+    <span class="tk-kw">let</span> n = <span class="tk-type">MLXFast</span>.rmsNorm(x, weight: w, eps: <span class="tk-num">1e-6</span>)
+    <span class="tk-kw">let</span> r = <span class="tk-type">MLXFast</span>.<span class="tk-type">RoPE</span>(n, dimensions: <span class="tk-num">64</span>, traditional: <span class="tk-kw">false</span>, base: <span class="tk-num">10_000</span>, scale: <span class="tk-num">1</span>, offset: <span class="tk-num">0</span>)
+    <span class="tk-kw">let</span> out = <span class="tk-type">MLXFast</span>.scaledDotProductAttention(
+        queries: r, keys: r, values: x, scale: <span class="tk-num">1</span> / <span class="tk-num">8</span>, mask: .causal)
+    print(out.shape)                                   <span class="tk-com">// [1, 8, 16, 64]</span>
+}</code></pre></div>
+<ul>
+<li><code>MLXFast.rmsNorm</code> normalizes each vector by its root-mean-square and scales it by a learned weight, in one pass.</li>
+<li><code>MLXFast.RoPE</code> rotates pairs of dimensions by angles that depend on the token's position. <code>offset</code> is the position of the first token in the array, which is how a cached decode step knows it is at position 517 and not 0.</li>
+<li><code>MLXFast.scaledDotProductAttention</code> computes <code>softmax(QKᵀ·scale + mask)·V</code> without materializing the full score matrix. Its <code>mask</code> argument takes <code>.causal</code> (each position attends only to itself and earlier ones), <code>.none</code>, or an explicit array. It also handles grouped-query attention, where several query heads share one key/value head, by itself.</li>
+</ul>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="your-own-metal-kernel" class="scroll-mt-24 text-2xl">Your own Metal kernel</h2>
+<div class="prose-block">
+<p>When no built-in operation does what you need efficiently, <code>MLXFast.metalKernel</code> compiles a Metal function from a string at run time:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/mlx-basics/main.swift</span><span>swift</span></div><pre><code><span class="tk-kw">func</span> customKernel() {
+    <span class="tk-com">// One GPU thread per element. MLX generates the function signature from</span>
+    <span class="tk-com">// the input and output names; the body is plain Metal.</span>
+    <span class="tk-kw">let</span> kernel = <span class="tk-type">MLXFast</span>.metalKernel(
+        name: <span class="tk-str">&quot;scaled_add&quot;</span>,
+        inputNames: [<span class="tk-str">&quot;a&quot;</span>, <span class="tk-str">&quot;b&quot;</span>],
+        outputNames: [<span class="tk-str">&quot;out&quot;</span>],
+        source: <span class="tk-str">&quot;&quot;&quot;
+            uint i = thread_position_in_grid.x;
+            out[i] = a[i] * 2.0 + b[i];
+            &quot;&quot;&quot;</span>)
+    <span class="tk-kw">let</span> a = <span class="tk-type">MLXArray</span>([<span class="tk-num">1</span>, <span class="tk-num">2</span>, <span class="tk-num">3</span>, <span class="tk-num">4</span>] <span class="tk-kw">as</span> [<span class="tk-type">Float</span>])
+    <span class="tk-kw">let</span> b = <span class="tk-type">MLXArray</span>([<span class="tk-num">10</span>, <span class="tk-num">10</span>, <span class="tk-num">10</span>, <span class="tk-num">10</span>] <span class="tk-kw">as</span> [<span class="tk-type">Float</span>])
+    <span class="tk-kw">let</span> out = kernel([a, b], grid: (<span class="tk-num">4</span>, <span class="tk-num">1</span>, <span class="tk-num">1</span>), threadGroup: (<span class="tk-num">4</span>, <span class="tk-num">1</span>, <span class="tk-num">1</span>),
+                     outputShapes: [[<span class="tk-num">4</span>]], outputDTypes: [.float32])
+    print(out[<span class="tk-num">0</span>])                                      <span class="tk-com">// [12, 14, 16, 18]</span>
+}</code></pre></div>
+<p>You write only the body. MLX generates the function signature from the input and output names, passes each input as a device pointer, and lets you set template parameters (types and integer constants) per call. <code>grid</code> is the total number of threads and <code>threadGroup</code> how many run together and can share fast memory.</p>
+<p>This looks like a curiosity now. In Lesson 17 it is essential: Qwen3.5's linear-attention recurrence written with ordinary operations launches several kernels per token, and a custom kernel that keeps the state in registers makes prefill about 3× faster.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">A Module's parameters form a tree whose dotted paths are the checkpoint's tensor names; @ModuleInfo(key:) sets each name. Loading weights is a dictionary update, and verify: [.all] turns naming mistakes into immediate errors. Quantized layers replace a weight with packed integers plus per-group scales and biases. compile fuses elementwise operations, and MLXFast provides fused kernels for the transformer's hot paths.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="fill" data-answer="layers.0.self_attn.q_proj.weight" data-placeholder="dotted path">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">type the term</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A module has <code>@ModuleInfo(key: "self_attn") var attention: Attention</code>, and Attention has <code>@ModuleInfo(key: "q_proj") var q: Linear</code>. The parent is stored in a model under <code>layers.0</code>. What is the full name of the query weight?</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>Keys nest: layers → 0 → self_attn → q_proj → weight. Swift property names (<code>attention</code>, <code>q</code>) do not appear.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Your loader misspells a key, <code>mlp.gate_prj.weight</code>. What does <code>update(parameters:verify: [.all])</code> do?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Loads everything else and ignores the typo</button>
+<button type="button" data-opt="1">Throws, naming the unexpected key and the missing parameter</button>
+<button type="button" data-opt="2">Guesses the closest name</button>
+<button type="button" data-opt="3">Crashes at the first forward pass</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>verify .all rejects extra keys, missing parameters and shape mismatches, so naming errors surface at load time instead of as garbage output.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="numeric" data-answer="1.05" data-tolerance="0.006" data-placeholder="MB">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A 4096×4096 weight is quantized to 4 bits with group size 64 and bfloat16 scales and biases. How many megabytes (10<sup>6</sup> bytes) do the scales and biases take together? Two decimals.</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>Each row has 4096 / 64 = 64 groups, so 4096 × 64 = 262,144 groups. Each group stores one scale and one bias at 2 bytes each: 262,144 × 4 = 1,048,576 bytes ≈ 1.05 MB. The packed weights themselves take 4096 × 4096 / 2 = 8 MB.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What does <code>offset</code> do in <code>MLXFast.RoPE(x, ..., offset: 517)</code>?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Skips the first 517 dimensions</button>
+<button type="button" data-opt="1">Treats the first token of x as position 517, so cached decoding rotates by the right angle</button>
+<button type="button" data-opt="2">Adds 517 to every value</button>
+<button type="button" data-opt="3">Uses only the last 517 tokens</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>RoPE angles depend on absolute position. During decode, the single new token sits after everything in the cache, so its position is the cache length.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why does compiling <code>silu(gate) * up</code> make it faster?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It switches to lower precision</button>
+<button type="button" data-opt="1">It fuses the operations into one kernel, so the data is read and written once instead of once per operation</button>
+<button type="button" data-opt="2">It moves the work to the CPU</button>
+<button type="button" data-opt="3">It caches the result between calls</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Elementwise work is memory-bound. Fusing removes the intermediate round trips through memory.</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="03-mlx-swift-basics.html" data-nav-prev>← 3. MLX Swift basics</a>
+      <a class="btn btn-primary" href="05-reading-a-checkpoint.html" data-nav-next>5. Reading a checkpoint →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+
+</body>
+</html>

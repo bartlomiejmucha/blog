@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>19. MTP: Qwen3.5's built-in drafter — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l19" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 19 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part IV · Advanced</span>
+      <h1 class="text-4xl leading-tight">19. MTP: Qwen3.5's built-in drafter</h1>
+      <p class="lead">Every Qwen3.5 checkpoint ships a one-layer head trained to predict two tokens ahead. Wire it up as the drafter, roll back linear-attention state on rejection, remove the hidden GPU waits, and measure where it pays off.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Explain what the MTP head computes and what it takes as input</li>
+<li>Implement the MTP speculative loop: prefill, draft, verify, commit or roll back</li>
+<li>Roll back Gated DeltaNet state using per-token snapshots from the kernel</li>
+<li>Structure a step so it synchronizes with the GPU once</li>
+<li>Interpret the measured speed-ups at 4, 8 and 16 bits</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="a-drafter-inside-the-model" class="scroll-mt-24 text-2xl">A drafter inside the model</h2>
+<div class="prose-block">
+<p>Separate draft models have problems: they must share the tokenizer, they cost memory, and their predictions often differ from the target's. Qwen3.5 avoids all of this. It was trained with a <strong>multi-token prediction</strong> (MTP) objective: besides predicting token t+1 from position t, a small extra head learned to predict token t+2. That head ships in every checkpoint as 15 tensors under <code>mtp.</code>.</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/MTPHead.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Qwen3.5&#x27;s multi-token-prediction head.</span>
+<span class="tk-com">///</span>
+<span class="tk-com">/// The main model&#x27;s hidden state at position t already encodes &quot;what comes</span>
+<span class="tk-com">/// after t&quot;. Given that state and the embedding of token t+1, this head runs</span>
+<span class="tk-com">/// one extra full-attention decoder layer and predicts token t+2. It shares</span>
+<span class="tk-com">/// the main model&#x27;s embedding table and output projection.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">final</span> <span class="tk-kw">class</span> <span class="tk-type">MTPHead</span>: <span class="tk-type">Module</span> {
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;pre_fc_norm_embedding&quot;</span>) <span class="tk-kw">var</span> preNormEmbedding: <span class="tk-type">RMSNorm</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;pre_fc_norm_hidden&quot;</span>) <span class="tk-kw">var</span> preNormHidden: <span class="tk-type">RMSNorm</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;fc&quot;</span>) <span class="tk-kw">var</span> fc: <span class="tk-type">Linear</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;layers&quot;</span>) <span class="tk-kw">var</span> layers: [<span class="tk-type">Qwen35Block</span>]
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;norm&quot;</span>) <span class="tk-kw">var</span> norm: <span class="tk-type">RMSNorm</span>
+
+    <span class="tk-kw">init</span>(_ c: <span class="tk-type">Qwen35Config</span>) {
+        _preNormEmbedding.wrappedValue = <span class="tk-type">RMSNorm</span>(dimensions: c.hiddenSize, eps: c.rmsNormEps)
+        _preNormHidden.wrappedValue = <span class="tk-type">RMSNorm</span>(dimensions: c.hiddenSize, eps: c.rmsNormEps)
+        _fc.wrappedValue = <span class="tk-type">Linear</span>(<span class="tk-num">2</span> * c.hiddenSize, c.hiddenSize, bias: <span class="tk-kw">false</span>)
+        _layers.wrappedValue = (<span class="tk-num">0</span> ..&lt; (c.mtpNumHiddenLayers ?? <span class="tk-num">1</span>)).map { _ <span class="tk-kw">in</span> <span class="tk-type">Qwen35Block</span>(c, linear: <span class="tk-kw">false</span>) }
+        _norm.wrappedValue = <span class="tk-type">RMSNorm</span>(dimensions: c.hiddenSize, eps: c.rmsNormEps)
+    }
+
+    <span class="tk-com">/// `embeddings` and `hidden` are `[B, L, hidden]`: the embedding of token</span>
+    <span class="tk-com">/// t+1 paired with the main model&#x27;s final hidden state at t. Returns the</span>
+    <span class="tk-com">/// head&#x27;s hidden state, which the shared output projection turns into</span>
+    <span class="tk-com">/// logits for token t+2.</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">func</span> callAsFunction(embeddings: <span class="tk-type">MLXArray</span>, hidden: <span class="tk-type">MLXArray</span>, caches: [<span class="tk-type">KVCache</span>]) -&gt; <span class="tk-type">MLXArray</span> {
+        <span class="tk-kw">var</span> h = fc(concatenated([preNormEmbedding(embeddings), preNormHidden(hidden)], axis: -<span class="tk-num">1</span>))
+        <span class="tk-kw">for</span> (layer, cache) <span class="tk-kw">in</span> zip(layers, caches) {
+            h = layer(h, cache: cache)
+        }
+        <span class="tk-kw">return</span> norm(h)
+    }
+
+    <span class="tk-kw">public</span> <span class="tk-kw">func</span> makeCaches() -&gt; [<span class="tk-type">KVCache</span>] {
+        layers.map { _ <span class="tk-kw">in</span> <span class="tk-type">KVCache</span>() }
+    }
+}</code></pre></div>
+<p>Its input is a pair for each position <em>t</em>:</p>
+<ul>
+<li>the main model's <strong>final hidden state</strong> at <em>t</em> (after the last norm, the same vector the output projection reads), which already encodes what comes next; and</li>
+<li>the <strong>embedding of token t+1</strong>, which tells the head which of the possible next tokens actually came.</li>
+</ul>
+<p>Both are RMS-normalized, concatenated, projected back to the hidden size by <code>fc</code>, and passed through one full-attention decoder block with its own small KV cache. The main model's output projection turns the result into logits for token t+2. The head reuses the main model's embedding table and output projection, so it adds only one block's worth of weights.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-generator" class="scroll-mt-24 text-2xl">The generator</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/MTPGenerator.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Speculative decoding with Qwen3.5&#x27;s MTP head as the drafter.</span>
+<span class="tk-com">///</span>
+<span class="tk-com">/// Every step:</span>
+<span class="tk-com">/// 1. The MTP head has already proposed a draft token `d` for the position</span>
+<span class="tk-com">///    after `last`.</span>
+<span class="tk-com">/// 2. The main model runs on `[last, d]` in one forward pass. Its first</span>
+<span class="tk-com">///    output says what should follow `last`; its second says what follows `d`.</span>
+<span class="tk-com">/// 3. If the main model agrees with `d`, both `d` and the token after it</span>
+<span class="tk-com">///    are emitted: two tokens for one pass. Otherwise only the main model&#x27;s</span>
+<span class="tk-com">///    own choice is emitted, and the caches forget `d`.</span>
+<span class="tk-com">/// 4. The MTP head reads the newly committed positions and drafts again.</span>
+<span class="tk-com">///</span>
+<span class="tk-com">/// With greedy sampling the output is the same as plain greedy decoding.</span>
+<span class="tk-com">/// With temperature &gt; 0 drafts are accepted by rejection sampling, which</span>
+<span class="tk-com">/// keeps the output distribution the same as the main model&#x27;s.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">struct</span> <span class="tk-type">MTPGenerator</span>: <span class="tk-type">Sequence</span>, <span class="tk-type">IteratorProtocol</span> {
+    <span class="tk-kw">let</span> model: <span class="tk-type">Qwen35Model</span>
+    <span class="tk-kw">let</span> mtp: <span class="tk-type">MTPHead</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">let</span> caches: [<span class="tk-type">LayerCache</span>]
+    <span class="tk-kw">let</span> mtpCaches: [<span class="tk-type">KVCache</span>]
+    <span class="tk-kw">var</span> sampler: <span class="tk-type">Sampler</span>
+    <span class="tk-kw">let</span> maxTokens: <span class="tk-type">Int</span>
+
+    <span class="tk-kw">var</span> last: <span class="tk-type">MLXArray</span>            <span class="tk-com">// [1, 1], the newest committed token</span>
+    <span class="tk-kw">var</span> draft: <span class="tk-type">MLXArray</span>           <span class="tk-com">// [1, 1]</span>
+    <span class="tk-kw">var</span> draftLogProbs: <span class="tk-type">MLXArray</span>?  <span class="tk-com">// MTP distribution of the draft, when sampling</span>
+    <span class="tk-kw">var</span> ready: [<span class="tk-type">Int</span>] = []
+    <span class="tk-kw">public</span> <span class="tk-kw">private</span>(<span class="tk-kw">set</span>) <span class="tk-kw">var</span> generated = <span class="tk-num">0</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">private</span>(<span class="tk-kw">set</span>) <span class="tk-kw">var</span> steps = <span class="tk-num">0</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">private</span>(<span class="tk-kw">set</span>) <span class="tk-kw">var</span> accepted = <span class="tk-num">0</span>
+
+    <span class="tk-kw">public</span> <span class="tk-kw">init</span>(model: <span class="tk-type">Qwen35Model</span>, prompt: [<span class="tk-type">Int</span>], parameters: <span class="tk-type">SamplingParameters</span>, maxTokens: <span class="tk-type">Int</span>) {
+        precondition(model.mtp != <span class="tk-kw">nil</span>, <span class="tk-str">&quot;load the model with withMTP: true&quot;</span>)
+        <span class="tk-kw">self</span>.model = model
+        <span class="tk-kw">self</span>.mtp = model.mtp!
+        <span class="tk-kw">self</span>.caches = model.makeCaches()
+        <span class="tk-kw">self</span>.mtpCaches = mtp.makeCaches()
+        <span class="tk-kw">self</span>.sampler = <span class="tk-type">Sampler</span>(parameters)
+        <span class="tk-kw">self</span>.maxTokens = maxTokens
+
+        <span class="tk-com">// Prefill the main model on the whole prompt, keeping hidden states.</span>
+        <span class="tk-kw">let</span> promptArray = <span class="tk-type">MLXArray</span>(prompt.map(<span class="tk-type">Int32</span>.<span class="tk-kw">init</span>)).reshaped(<span class="tk-num">1</span>, -<span class="tk-num">1</span>)
+        <span class="tk-kw">let</span> (logits, hidden) = model.forward(promptArray, caches: caches)
+        <span class="tk-kw">let</span> first = sampler(logits[<span class="tk-num">0</span>..., -<span class="tk-num">1</span>, <span class="tk-num">0</span>...]).reshaped(<span class="tk-num">1</span>, <span class="tk-num">1</span>)
+
+        <span class="tk-com">// Prefill the MTP head. Position i pairs hidden[i] with the token at</span>
+        <span class="tk-com">// i+1, so the inputs are the prompt shifted left plus the first token.</span>
+        <span class="tk-kw">let</span> shifted = concatenated([promptArray[<span class="tk-num">0</span>..., <span class="tk-num">1</span>...], first.asType(.int32)], axis: <span class="tk-num">1</span>)
+        last = first
+        ready = [first.item(<span class="tk-type">Int</span>.<span class="tk-kw">self</span>)]
+        draft = first
+        (draft, draftLogProbs) = propose(tokens: shifted, hidden: hidden)
+    }</code></pre></div>
+<p><strong>Prefill</strong> runs the main model over the prompt, keeping the hidden states, and samples the first token. Then it prefills the MTP head: position <em>i</em> pairs hidden state <em>i</em> with the token at <em>i+1</em>, so the head's token inputs are the prompt shifted left by one, with the first generated token appended. The head's output at the last position is the first draft.</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/MTPGenerator.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Runs the MTP head on newly committed (token, hidden) pairs and drafts</span>
+<span class="tk-com">/// the token after the last one.</span>
+<span class="tk-kw">mutating</span> <span class="tk-kw">func</span> propose(tokens: <span class="tk-type">MLXArray</span>, hidden: <span class="tk-type">MLXArray</span>) -&gt; (<span class="tk-type">MLXArray</span>, <span class="tk-type">MLXArray</span>?) {
+    <span class="tk-kw">let</span> h = mtp(embeddings: model.embed(tokens), hidden: hidden, caches: mtpCaches)
+    <span class="tk-kw">let</span> logits = model.logits(h[<span class="tk-num">0</span>..., (-<span class="tk-num">1</span>)..., <span class="tk-num">0</span>...])[<span class="tk-num">0</span>..., <span class="tk-num">0</span>, <span class="tk-num">0</span>...]
+    <span class="tk-kw">if</span> sampler.parameters.temperature == <span class="tk-num">0</span> {
+        <span class="tk-kw">return</span> (argMax(logits, axis: -<span class="tk-num">1</span>).reshaped(<span class="tk-num">1</span>, <span class="tk-num">1</span>), <span class="tk-kw">nil</span>)
+    }
+    <span class="tk-kw">let</span> logprobs = sampler.logProbabilities(logits)
+    <span class="tk-kw">return</span> (sampler.sample(fromLogProbs: logprobs).reshaped(<span class="tk-num">1</span>, <span class="tk-num">1</span>), logprobs)
+}</code></pre></div>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="a-step" class="scroll-mt-24 text-2xl">A step</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/MTPGenerator.swift</span><span>swift</span></div><pre><code><span class="tk-kw">mutating</span> <span class="tk-kw">func</span> step() {
+    steps += <span class="tk-num">1</span>
+    <span class="tk-kw">for</span> <span class="tk-kw">case</span> <span class="tk-kw">let</span> cache <span class="tk-kw">as</span> <span class="tk-type">LinearCache</span> <span class="tk-kw">in</span> caches { cache.recordSnapshots = <span class="tk-kw">true</span> }
+    <span class="tk-kw">let</span> input = concatenated([last, draft], axis: <span class="tk-num">1</span>).asType(.int32)
+    <span class="tk-kw">let</span> (logits, hidden) = model.forward(input, caches: caches)
+    <span class="tk-kw">for</span> <span class="tk-kw">case</span> <span class="tk-kw">let</span> cache <span class="tk-kw">as</span> <span class="tk-type">LinearCache</span> <span class="tk-kw">in</span> caches { cache.recordSnapshots = <span class="tk-kw">false</span> }
+
+    <span class="tk-com">// Build the accept decision, the correction and the bonus token as</span>
+    <span class="tk-com">// one lazy graph, then read them back with a single GPU sync.</span>
+    <span class="tk-kw">let</span> (ok, correction) = verify(logits[<span class="tk-num">0</span>..., <span class="tk-num">0</span>, <span class="tk-num">0</span>...])
+    <span class="tk-kw">let</span> bonus = sampler(logits[<span class="tk-num">0</span>..., <span class="tk-num">1</span>, <span class="tk-num">0</span>...]).reshaped(<span class="tk-num">1</span>, <span class="tk-num">1</span>)
+    eval(ok, correction, bonus, draft)
+
+    <span class="tk-kw">if</span> ok.item(<span class="tk-type">Bool</span>.<span class="tk-kw">self</span>) {
+        accepted += <span class="tk-num">1</span>
+        <span class="tk-com">// Both positions are committed. The second output is a free extra token.</span>
+        ready += [draft.item(<span class="tk-type">Int</span>.<span class="tk-kw">self</span>), bonus.item(<span class="tk-type">Int</span>.<span class="tk-kw">self</span>)]
+        <span class="tk-kw">let</span> committed = concatenated([draft, bonus], axis: <span class="tk-num">1</span>).asType(.int32)
+        last = bonus
+        (draft, draftLogProbs) = propose(tokens: committed, hidden: hidden)
+    } <span class="tk-kw">else</span> {
+        <span class="tk-com">// Drop the rejected draft from every cache, then commit the fix.</span>
+        <span class="tk-kw">for</span> cache <span class="tk-kw">in</span> caches { cache.trim(<span class="tk-num">1</span>) }
+        ready.append(correction.item(<span class="tk-type">Int</span>.<span class="tk-kw">self</span>))
+        last = correction
+        (draft, draftLogProbs) = propose(
+            tokens: correction.asType(.int32), hidden: hidden[<span class="tk-num">0</span>..., ..&lt;<span class="tk-num">1</span>, <span class="tk-num">0</span>...])
+    }
+}</code></pre></div><div class="code-block"><div class="code-title"><span>code/Sources/Inference/MTPGenerator.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Decides whether the main model accepts the draft, and which token to</span>
+<span class="tk-com">/// emit instead if it does not. Both results are lazy arrays.</span>
+<span class="tk-kw">mutating</span> <span class="tk-kw">func</span> verify(_ targetLogits: <span class="tk-type">MLXArray</span>) -&gt; (ok: <span class="tk-type">MLXArray</span>, correction: <span class="tk-type">MLXArray</span>) {
+    <span class="tk-kw">guard</span> <span class="tk-kw">let</span> q = draftLogProbs <span class="tk-kw">else</span> {
+        <span class="tk-kw">let</span> choice = argMax(targetLogits, axis: -<span class="tk-num">1</span>).reshaped(<span class="tk-num">1</span>, <span class="tk-num">1</span>)
+        <span class="tk-kw">return</span> (choice .== draft, choice)
+    }
+    <span class="tk-com">// Accept with probability min(1, p(d) / q(d)).</span>
+    <span class="tk-kw">let</span> p = sampler.logProbabilities(targetLogits)
+    <span class="tk-kw">let</span> ratio = exp(takeAlong(p, draft, axis: -<span class="tk-num">1</span>) - takeAlong(q, draft, axis: -<span class="tk-num">1</span>))
+    <span class="tk-kw">let</span> ok = sampler.uniform([<span class="tk-num">1</span>, <span class="tk-num">1</span>]) .&lt; ratio
+    <span class="tk-com">// On rejection, sample from the leftover mass max(0, p - q).</span>
+    <span class="tk-kw">let</span> residual = maximum(exp(p) - exp(q), <span class="tk-num">0</span>)
+    <span class="tk-kw">let</span> correction = sampler.sample(fromLogProbs: log(residual)).reshaped(<span class="tk-num">1</span>, <span class="tk-num">1</span>)
+    <span class="tk-kw">return</span> (ok, correction)
+}</code></pre></div>
+<p>Each step runs the target on <code>[last, draft]</code> and then branches:</p>
+<ul>
+<li><strong>Accepted</strong>: emit the draft and the bonus token from position 1. Both positions are now committed, so the MTP head reads both (token, hidden state) pairs and drafts the token after the bonus.</li>
+<li><strong>Rejected</strong>: every cache holds one position too many, the draft's. Trim them all by one, emit the correction, and let the MTP head read the single committed pair.</li>
+</ul>
+<p><code>verify</code> implements Lesson 18's rules: an argmax comparison for greedy decoding, rejection sampling otherwise, both written as lazy array expressions.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="rolling-back-linear-attention" class="scroll-mt-24 text-2xl">Rolling back linear attention</h2>
+<div class="prose-block">
+<p>Trimming a KV cache is one integer (Lesson 9). Trimming Gated DeltaNet state is impossible (Lesson 17). So before the verify pass, the generator sets <code>recordSnapshots</code> on every linear cache, and the layer asks the kernel for its <code>history</code> output: the state after each of the two tokens. The convolution window after each token is a slice of the convolution input. On rejection, <code>trim(1)</code> restores the snapshot taken after the first token, <code>last</code>, which is exactly the committed state.</p>
+<p>The first version recorded snapshots with the plain-ops recurrence, which keeps per-token states naturally. Measured in a Debug build, that made the 2-token verify pass cost 49 ms against 34 ms for the kernel path, more than the second token itself. Adding the history output to the kernel brought it to 36 ms. In Release the snapshot overhead is about 1 ms on a 17 ms pass.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="one-sync-per-step" class="scroll-mt-24 text-2xl">One sync per step</h2>
+<div class="prose-block">
+<p>Lesson 3 warned that every <code>item()</code> makes the CPU wait for the GPU. The first sampled-mode implementation read the acceptance ratio, the draft, the correction and the bonus token with separate <code>item()</code> calls, four waits per step, and it was slower than plain decoding: 30.8 tokens per second against 35.0 (Debug).</p>
+<p>The version above builds the accept decision, the correction and the bonus token as one lazy graph and evaluates it once, with <code>eval(ok, correction, bonus, draft)</code>, before reading any of them. Sampled-mode throughput rose to 44.3 tokens per second, now faster than plain. Computing a correction or bonus that ends up unused costs a few microseconds of GPU time; each avoided synchronization saves far more.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="results-on-a-base-m1" class="scroll-mt-24 text-2xl">Results on a base M1</h2>
+<div class="prose-block">
+<p>Qwen3.5-0.8B, 256 tokens of a coding answer, Release build:</p>
+<div class="code-block"><pre><code>weights   plain       MTP         speed-up   acceptance   1-token pass   2-token pass
+4-bit     92.5 tok/s  87.3 tok/s  0.94×      87%          12.2 ms        16.8 ms
+8-bit     50.9 tok/s  66.8 tok/s  1.31×      92%          18.6 ms        18.6 ms
+bf16      31.8 tok/s  24.9 tok/s  0.78×      92%          30.1 ms        65.0 ms</code></pre></div>
+<p>The acceptance rate is excellent everywhere: the head agrees with the main model about nine times in ten. What decides the outcome is the last two columns, Lesson 18's c_verify, and they match the kernel measurements from Lesson 15. At 8 bits, two rows cost the same as one, so the second token really is free. At 4 bits, the 2-token pass costs 1.4 normal steps; add about 3 ms for the head (mostly its pass through the 248,000-row output projection) and there is no gain left. In bf16 the multi-row kernel costs 2.2 normal steps.</p>
+<p>So on this machine the best configuration for single-user latency is 8-bit weights with MTP: 67 tokens per second at higher precision than 4-bit. Plain 4-bit is faster still but less accurate. On chips with more compute per byte of bandwidth, or on larger models where each step is more firmly bandwidth-bound, the 2-token pass gets cheaper relative to one token, and MTP gains grow. Measure on your hardware with <code>infer &lt;model&gt; bench</code> before choosing.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="checking-correctness" class="scroll-mt-24 text-2xl">Checking correctness</h2>
+<div class="prose-block">
+<p>Greedy MTP output should equal plain greedy output. For the coding prompt, the two agree for 13 tokens and then diverge. At that point the plain model's top two logits are <code>" Check" 20.375</code> and <code>" Checks" 20.375</code>, an exact tie in bfloat16, and the 2-token pass's slightly different rounding breaks it the other way. Everything else checks out: acceptance rates near 90% are only possible if the head's inputs (the post-norm hidden state, the shifted tokens, the shared projection) are wired correctly, and a wrong pairing drops acceptance close to zero.</p>
+<p>Two things to remember when running MTP in the server: it is used only by the serial engine (batching and speculation compete for the same spare rows in the matmul), and it currently bypasses the prompt cache (Lesson 14).</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">The MTP head combines the main model's final hidden state at position t with the embedding of token t+1, runs one full-attention block, and predicts token t+2 through the shared output projection. The generator drafts one token per step with it, verifies with a 2-token target pass, and on rejection trims the KV caches and restores linear-attention snapshots that the kernel recorded. On a base M1 the drafter is accepted 84 to 92% of the time; the speed-up is 1.31× at 8 bits, while at 4 bits and bf16 the 2-token pass is too expensive to win.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What does the MTP head receive for position t?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">The prompt text</button>
+<button type="button" data-opt="1">The main model's final hidden state at t and the embedding of token t+1</button>
+<button type="button" data-opt="2">Only the logits at t</button>
+<button type="button" data-opt="3">The KV cache of the last layer</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>The hidden state says what is likely next; the embedding says what actually came next. Together they let the head predict t+2.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A draft is rejected. What happens to the Gated DeltaNet caches?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Nothing; they are recomputed next step</button>
+<button type="button" data-opt="1">They are restored to the snapshot taken after the first token of the verify pass</button>
+<button type="button" data-opt="2">They are cleared</button>
+<button type="button" data-opt="3">Their offset is decremented, like a KV cache</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>The kernel recorded the state after each token. Restoring the first snapshot removes the draft's contribution exactly.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="numeric" data-answer="1.31" data-tolerance="0.006" data-placeholder="×">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Using the 8-bit row of the table: plain 50.9 tok/s, MTP 66.8 tok/s. What is the speed-up? (Two decimals.)</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>66.8 / 50.9 ≈ 1.31.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why is MTP slower than plain decoding at 4 bits on the M1 despite 87% acceptance?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">The head is inaccurate at 4 bits</button>
+<button type="button" data-opt="1">The 2-token verify pass costs about 1.4 normal steps, and the draft adds about 0.25 more, so 1.87 tokens cost about 1.65 steps or more</button>
+<button type="button" data-opt="2">Quantization breaks rollback</button>
+<button type="button" data-opt="3">The tokenizer is slower</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Lesson 18's formula: 1.87 / (1.38 + 0.25) ≈ 1.15 at best in theory, and per-step overheads take the rest.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why did merging four item() calls into one eval make sampled MTP faster?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">item() is inaccurate</button>
+<button type="button" data-opt="1">Each item() is a CPU–GPU synchronization; one combined evaluation waits once per step instead of four times</button>
+<button type="button" data-opt="2">eval uses a faster kernel</button>
+<button type="button" data-opt="3">It reduced memory use</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Synchronizations serialize CPU and GPU. Batching the reads into one evaluation removes three of them.</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="18-speculative-decoding.html" data-nav-prev>← 18. Speculative decoding</a>
+      <a class="btn btn-primary" href="20-performance-engineering.html" data-nav-next>20. Performance engineering →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+
+</body>
+</html>

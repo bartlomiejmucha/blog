@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>2. Apple Silicon and the memory-bandwidth bound — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l02" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 2 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part I · Foundations</span>
+      <h1 class="text-4xl leading-tight">2. Apple Silicon and the memory-bandwidth bound</h1>
+      <p class="lead">Generating one token means reading every weight of the model once. On a Mac that makes memory bandwidth, not compute, the speed limit, and it explains almost every design choice in this course.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Estimate a model's decode speed from its size and the chip's memory bandwidth</li>
+<li>Explain why decode is bandwidth-bound and prefill is compute-bound</li>
+<li>Say what unified memory changes, and what it does not</li>
+<li>Explain why MLX is a good fit for an inference server on a Mac</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="what-one-token-costs" class="scroll-mt-24 text-2xl">What one token costs</h2>
+<div class="prose-block">
+<p>Lesson 1 said each new token costs one forward pass. Look at what that pass does. Almost all of a transformer's work is matrix-vector multiplication: a vector for the current token is multiplied by weight matrices, layer after layer. For each weight, the GPU must</p>
+<ol>
+<li>load the weight from memory, and</li>
+<li>do one multiply and one add with it: 2 floating-point operations.</li>
+</ol>
+<p>So decoding one token with a model of <code>N</code> parameters moves about <code>N × bytes per weight</code> bytes and does about <code>2N</code> operations. For Qwen3.5-0.8B with 4-bit weights, that is roughly 0.45 GB read and 1.6 billion operations per token.</p>
+<p>Which of the two is the bottleneck depends on the chip. A base M1 can read memory at about 68 GB/s (we measured 52 GB/s achieved by MLX's quantized kernel) and do about 1.45 trillion float32 operations per second (measured with a 4096×4096 matrix multiply). Reading 0.45 GB takes about 8.7 ms at 52 GB/s. Doing 1.6 billion operations takes about 1.1 ms. <strong>The GPU spends most of each step waiting for memory.</strong></p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="arithmetic-intensity" class="scroll-mt-24 text-2xl">Arithmetic intensity</h2>
+<div class="prose-block">
+<p>The general tool here is <strong>arithmetic intensity</strong>: operations performed per byte moved. Every chip has a balance point, its peak operations per second divided by its bandwidth. For the M1, about 1.45 TFLOPS / 60 GB/s ≈ 24 operations per byte. Work below that is <em>bandwidth-bound</em>; work above it is <em>compute-bound</em>.</p>
+<table>
+<tr><th>Work</th><th>Operations per weight byte</th><th>Bound by</th></tr>
+<tr><td>Decode, 4-bit weights, 1 sequence</td><td>2 ops / 0.5 byte = 4</td><td>bandwidth</td></tr>
+<tr><td>Decode, 8 sequences batched</td><td>8 × 4 = 32</td><td>roughly balanced</td></tr>
+<tr><td>Prefill, 500-token prompt</td><td>500 × 4 = 2,000</td><td>compute</td></tr>
+</table>
+<p>Prefill multiplies a whole matrix of token vectors by each weight matrix, so each weight that is read is used hundreds of times. That is why a 512-token prefill takes about 0.75 s on the M1, not 512 × 11 ms ≈ 5.6 s.</p>
+<p>The decode row is the important one. Any technique that does more useful work per weight read is a direct speed-up: quantization shrinks the bytes; batching serves several sequences per read (Lesson 15); speculative decoding checks several tokens of one sequence per read (Lessons 18 and 19). The rest of this course keeps coming back to this table.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="estimate-it-yourself" class="scroll-mt-24 text-2xl">Estimate it yourself</h2>
+<div class="prose-block">
+<p>The rule of thumb: <strong>decode tokens per second ≈ achievable bandwidth ÷ bytes read per token</strong>. Achievable bandwidth is usually 70–85% of the advertised figure. Bytes per token is the weight size, plus a little for the KV cache, which grows with context.</p>
+<p>Try it below. On the M1, the 0.8B model at 4 bits gives a ceiling of about 113 tokens per second; the finished server reaches about 90. The gap is real work the rule ignores: the 248,000-row output projection, attention over the cache, dozens of small kernel launches per layer, and CPU time between steps. Lesson 20 measures each of these.</p>
+</div>
+<div class="figure" id="viz-bandwidth"><p class="figure-title">Decode speed ceiling</p><p class="figure-sub">Pick a chip, a model size and a weight precision. The bar is bandwidth ÷ bytes per token, at 75% of the advertised bandwidth.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="unified-memory" class="scroll-mt-24 text-2xl">Unified memory</h2>
+<div class="prose-block">
+<p>On a PC with a discrete GPU, the model lives in the GPU's own memory, and anything the CPU produces must be copied across a PCIe bus. Apple Silicon has <strong>unified memory</strong>: CPU and GPU share the same physical RAM. Three consequences matter for us:</p>
+<ul>
+<li><strong>No copies.</strong> An array written by the CPU (token ids, a sampled token) is visible to the GPU without a transfer. MLX arrays are not tied to a device; you choose where an operation runs, not where data lives.</li>
+<li><strong>Model size is limited by RAM.</strong> A 16 GB Mac can hold models that would not fit on a 12 GB graphics card. But macOS keeps part of RAM for itself and caps how much the GPU may use by default, so plan on roughly two thirds of RAM for weights and caches.</li>
+<li><strong>Bandwidth is shared.</strong> The same memory system serves the CPU, the GPU and everything else running. A busy browser can slow decode measurably. Benchmark on a quiet machine.</li>
+</ul>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="why-mlx" class="scroll-mt-24 text-2xl">Why MLX</h2>
+<div class="prose-block">
+<p>MLX is Apple's array framework for machine learning on Apple Silicon. It has a NumPy-like API in Python, C++ and Swift, and it was designed around unified memory. For an inference server it gives us:</p>
+<ul>
+<li><strong>Metal kernels for the hot paths</strong>: quantized matrix multiplication, fused attention, RMSNorm and RoPE, all tuned for Apple GPUs.</li>
+<li><strong>Lazy evaluation</strong>: operations build a graph that runs when a result is needed. That lets you queue the next step on the GPU while the CPU does other work (Lesson 3).</li>
+<li><strong>A native Swift API</strong>, so the model, the scheduler and the HTTP server are one process in one language with no Python runtime.</li>
+<li><strong>Custom kernels</strong> written inline in Metal when nothing built-in fits. Lesson 17 writes one for Qwen3.5's linear attention.</li>
+</ul>
+<p>The alternatives are worth knowing. llama.cpp is a mature C++ engine with its own file format (GGUF). Core ML targets the Neural Engine but is awkward for autoregressive generation. The Python <code>mlx-lm</code> package is the reference this course checks its numbers against. Building on raw MLX Swift is the right choice here because the goal is to understand and control every part.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">Decoding one token reads all the weights once and does about two floating-point operations per weight. That is far too little arithmetic per byte to keep the GPU busy, so decode speed is roughly memory bandwidth divided by model size. Prefill processes many tokens per weight read and is limited by compute instead. Shrinking the bytes (quantization) or sharing each read across more tokens (batching, speculative decoding) are the levers.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="numeric" data-answer="30" data-tolerance="0.5" data-placeholder="tokens/s">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>An 8-billion-parameter model is stored with 4-bit weights (ignore scales). The chip reads memory at 120 GB/s. What is the decode ceiling in tokens per second?</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>8 × 10<sup>9</sup> weights × 0.5 bytes = 4 GB per token. 120 GB/s ÷ 4 GB = 30 tokens per second. Real systems land somewhat below this.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why is prefill much faster per token than decode?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Prefill skips the attention layers</button>
+<button type="button" data-opt="1">Each weight read during prefill is used for every prompt token, so it is compute-bound instead of bandwidth-bound</button>
+<button type="button" data-opt="2">Prefill uses a smaller model</button>
+<button type="button" data-opt="3">Prefill runs on the Neural Engine</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>During prefill the whole prompt is multiplied by each weight matrix at once. One read serves hundreds of tokens, so arithmetic, not memory, becomes the limit.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="numeric" data-answer="20" data-tolerance="0.1" data-placeholder="ops/byte">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A chip does 4 TFLOPS and reads 200 GB/s. What is its balance point in operations per byte?</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>4 × 10<sup>12</sup> ÷ 200 × 10<sup>9</sup> = 20 operations per byte. Single-sequence decode at about 4 ops/byte sits far below it, so it is bandwidth-bound.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="multi" data-answer="0,2,3">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which statements about unified memory are true? Select all that apply.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">CPU and GPU can use the same arrays without copying</button>
+<button type="button" data-opt="1">The GPU can always use 100% of RAM</button>
+<button type="button" data-opt="2">Other apps compete for the same memory bandwidth</button>
+<button type="button" data-opt="3">Model size is limited by system RAM, not a separate GPU memory</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Unified memory removes copies and the separate VRAM limit, but macOS caps the GPU's share by default and the bandwidth is shared with everything else.</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="01-what-an-inference-server-does.html" data-nav-prev>← 1. What an inference server does</a>
+      <a class="btn btn-primary" href="03-mlx-swift-basics.html" data-nav-next>3. MLX Swift basics →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l02.js" defer></script>
+</body>
+</html>

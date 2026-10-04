@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>15. Continuous batching — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l15" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 15 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part III · The server</span>
+      <h1 class="text-4xl leading-tight">15. Continuous batching</h1>
+      <p class="lead">Serve several sequences in each decode step so the weights are read once for all of them. Build a batching engine without padding, then measure how much it really helps on an M1, and why the answer depends on the matmul kernel.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Explain why batching raises throughput for memory-bound decoding</li>
+<li>Build batch views over per-sequence caches for both attention and linear attention</li>
+<li>Interleave chunked prefill with batched decode</li>
+<li>Read measured batching curves and connect them to kernel behaviour</li>
+<li>Explain why batched outputs differ slightly from unbatched ones</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="why-batching-works" class="scroll-mt-24 text-2xl">Why batching works</h2>
+<div class="prose-block">
+<p>Go back to Lesson 2's table. One sequence decoding at 4 bits does about 4 operations per weight byte, far below the M1's balance point of about 24. The GPU spends most of the step waiting for weights. If eight sequences each need one token, their eight token vectors can be stacked into an 8-row matrix and multiplied by each weight matrix in one pass. The weights are read once, the arithmetic goes up eightfold, and the step should cost little more than a single-sequence step.</p>
+<p>"Continuous" means the batch changes all the time. Requests finish at different moments and new ones arrive. Instead of waiting for a whole batch to finish, the engine admits and retires sequences between any two steps.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="batch-views-instead-of-padding" class="scroll-mt-24 text-2xl">Batch views instead of padding</h2>
+<div class="prose-block">
+<p>The hard part is that sequences have different lengths. The common solution is to pad all caches to the longest one and mask the padding. This course uses a simpler design that needs no padding at all:</p>
+<ul>
+<li><strong>Matmuls run batched.</strong> The new tokens of all sequences form a <code>[B, 1]</code> input, so every projection and MLP sees a <code>[B, 1, hidden]</code> activation. This is where the weight reads, and therefore nearly all of the cost, happen.</li>
+<li><strong>Attention runs per sequence.</strong> Each sequence's keys and values stay in its own cache, at its own length, with its own RoPE offset. A <code>BatchKVCache</code> view tells <code>attend</code> to process the rows one at a time:</li>
+</ul>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/LayerCache.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// The attention caches of several independent sequences, used for one</span>
+<span class="tk-com">/// batched decode step. Each sequence keeps its own length and positions.</span>
+<span class="tk-kw">final</span> <span class="tk-kw">class</span> <span class="tk-type">BatchKVCache</span>: <span class="tk-type">LayerCache</span> {
+    <span class="tk-kw">let</span> caches: [<span class="tk-type">KVCache</span>]
+    <span class="tk-kw">init</span>(_ caches: [<span class="tk-type">KVCache</span>]) { <span class="tk-kw">self</span>.caches = caches }
+    <span class="tk-kw">var</span> offset: <span class="tk-type">Int</span> { caches.map(\.offset).max() ?? <span class="tk-num">0</span> }
+    <span class="tk-kw">var</span> state: [<span class="tk-type">MLXArray</span>] { caches.flatMap(\.state) }
+    <span class="tk-kw">func</span> trim(_ count: <span class="tk-type">Int</span>) { caches.forEach { $0.trim(count) } }
+    <span class="tk-kw">func</span> copy() -&gt; <span class="tk-type">LayerCache</span> { fatalError(<span class="tk-str">&quot;batch views are temporary&quot;</span>) }
+}</code></pre></div><div class="code-block"><div class="code-title"><span>code/Sources/Inference/LayerCache.swift</span><span>swift</span></div><pre><code><span class="tk-kw">if</span> <span class="tk-kw">let</span> batch = cache <span class="tk-kw">as</span>? <span class="tk-type">BatchKVCache</span> {
+    <span class="tk-kw">let</span> rows = batch.caches.enumerated().map { i, c <span class="tk-kw">in</span>
+        <span class="tk-kw">let</span> offset = c.offset
+        <span class="tk-kw">let</span> (keys, values) = c.update(keys: rope(k[i ..&lt; i + <span class="tk-num">1</span>], offset), values: v[i ..&lt; i + <span class="tk-num">1</span>])
+        <span class="tk-kw">return</span> <span class="tk-type">MLXFast</span>.scaledDotProductAttention(
+            queries: rope(q[i ..&lt; i + <span class="tk-num">1</span>], offset), keys: keys, values: values, scale: scale, mask: mask)
+    }
+    <span class="tk-kw">return</span> concatenated(rows, axis: <span class="tk-num">0</span>)</code></pre></div>
+<p>Qwen3.5's linear-attention layers are even easier, because every sequence's state has the same fixed size. A <code>BatchLinearCache</code> stacks the states along the batch axis for the step and splits the results back:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/LayerCache.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// The linear-attention state of several sequences, stacked along the batch</span>
+<span class="tk-com">/// axis for one step and split back afterwards. Every sequence holds the</span>
+<span class="tk-com">/// same fixed-size state, so no padding is needed.</span>
+<span class="tk-kw">final</span> <span class="tk-kw">class</span> <span class="tk-type">BatchLinearCache</span>: <span class="tk-type">LayerCache</span> {
+    <span class="tk-kw">let</span> caches: [<span class="tk-type">LinearCache</span>]
+    <span class="tk-kw">init</span>(_ caches: [<span class="tk-type">LinearCache</span>]) { <span class="tk-kw">self</span>.caches = caches }
+    <span class="tk-kw">var</span> offset: <span class="tk-type">Int</span> { caches.map(\.offset).max() ?? <span class="tk-num">0</span> }
+    <span class="tk-kw">var</span> state: [<span class="tk-type">MLXArray</span>] { caches.flatMap(\.state) }
+    <span class="tk-kw">func</span> trim(_ count: <span class="tk-type">Int</span>) { caches.forEach { $0.trim(count) } }
+    <span class="tk-kw">func</span> copy() -&gt; <span class="tk-type">LayerCache</span> { fatalError(<span class="tk-str">&quot;batch views are temporary&quot;</span>) }
+
+    <span class="tk-kw">var</span> conv: <span class="tk-type">MLXArray</span> { concatenated(caches.map { $0.conv! }, axis: <span class="tk-num">0</span>) }
+    <span class="tk-kw">var</span> recurrent: <span class="tk-type">MLXArray</span> { concatenated(caches.map { $0.recurrent! }, axis: <span class="tk-num">0</span>) }
+
+    <span class="tk-kw">func</span> update(conv: <span class="tk-type">MLXArray</span>, recurrent: <span class="tk-type">MLXArray</span>, count: <span class="tk-type">Int</span>) {
+        <span class="tk-kw">for</span> (i, cache) <span class="tk-kw">in</span> caches.enumerated() {
+            cache.update(conv: conv[i ..&lt; i + <span class="tk-num">1</span>], recurrent: recurrent[i ..&lt; i + <span class="tk-num">1</span>], count: count, snapshots: [])
+        }
+    }
+}</code></pre></div>
+<p>The model code needs no other change. A helper builds one view per layer from the per-sequence caches:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/LayerCache.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Per-layer views that span the caches of several sequences.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">func</span> batchCaches(_ perSequence: [[<span class="tk-type">LayerCache</span>]]) -&gt; [<span class="tk-type">LayerCache</span>] {
+    (<span class="tk-num">0</span> ..&lt; perSequence[<span class="tk-num">0</span>].count).map { layer <span class="tk-kw">in</span>
+        <span class="tk-kw">if</span> perSequence[<span class="tk-num">0</span>][layer] <span class="tk-kw">is</span> <span class="tk-type">KVCache</span> {
+            <span class="tk-kw">return</span> <span class="tk-type">BatchKVCache</span>(perSequence.map { $0[layer] <span class="tk-kw">as</span>! <span class="tk-type">KVCache</span> })
+        }
+        <span class="tk-kw">return</span> <span class="tk-type">BatchLinearCache</span>(perSequence.map { $0[layer] <span class="tk-kw">as</span>! <span class="tk-type">LinearCache</span> })
+    }
+}</code></pre></div>
+<p>The per-row attention costs a few extra kernel launches per layer. The measurements below show it is small: in bfloat16, going from 4 to 8 rows adds only 7 ms per step.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-batching-engine" class="scroll-mt-24 text-2xl">The batching engine</h2>
+<div class="prose-block">
+<p>The engine keeps the same inbox and worker thread as the serial engine, but its loop does three things per iteration: admit new jobs, advance at most one prefill chunk, and run one batched decode step for every running sequence.</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/BatchEngine.swift</span><span>swift</span></div><pre><code><span class="tk-kw">private</span> <span class="tk-kw">func</span> run() {
+    <span class="tk-kw">while</span> <span class="tk-kw">true</span> {
+        <span class="tk-kw">if</span> waiting.isEmpty &amp;&amp; running.isEmpty { wake.wait() }
+        <span class="tk-kw">for</span> job <span class="tk-kw">in</span> inbox.withLock({ q <span class="tk-kw">in</span> <span class="tk-kw">defer</span> { q.removeAll() }; <span class="tk-kw">return</span> q }) {
+            waiting.append(<span class="tk-type">Sequence</span>(job: job, loaded: loaded))
+        }
+
+        <span class="tk-com">// Drop sequences whose clients went away.</span>
+        <span class="tk-kw">for</span> s <span class="tk-kw">in</span> (waiting + running) <span class="tk-kw">where</span> s.job.cancelled {
+            finish(s, .cancelled)
+        }
+
+        <span class="tk-com">// Admit: advance the oldest waiting prompt by one chunk.</span>
+        <span class="tk-kw">if</span> running.count &lt; maxBatch, <span class="tk-kw">let</span> s = waiting.first {
+            prefillChunk(s)
+        }
+
+        <span class="tk-kw">if</span> !running.isEmpty {
+            decodeStep()
+        }
+    }
+}</code></pre></div><div class="code-block"><div class="code-title"><span>code/Sources/Inference/BatchEngine.swift</span><span>swift</span></div><pre><code><span class="tk-kw">private</span> <span class="tk-kw">func</span> prefillChunk(_ s: <span class="tk-type">Sequence</span>) {
+    <span class="tk-kw">let</span> chunk = s.pendingPrompt.prefix(prefillChunk)
+    s.pendingPrompt = s.pendingPrompt.dropFirst(chunk.count)
+    <span class="tk-kw">let</span> logits = loaded.model(<span class="tk-type">MLXArray</span>(chunk.map(<span class="tk-type">Int32</span>.<span class="tk-kw">init</span>)).reshaped(<span class="tk-num">1</span>, -<span class="tk-num">1</span>), caches: s.caches)
+    <span class="tk-kw">if</span> s.pendingPrompt.isEmpty {
+        <span class="tk-com">// The prompt is done: its last logits give the first token.</span>
+        <span class="tk-kw">let</span> token = s.sampler(logits[<span class="tk-num">0</span>..., -<span class="tk-num">1</span>, <span class="tk-num">0</span>...])
+        eval(token)
+        waiting.removeFirst()
+        running.append(s)
+        emit(s, token.item(<span class="tk-type">Int</span>.<span class="tk-kw">self</span>))
+    } <span class="tk-kw">else</span> {
+        eval(s.caches.flatMap(\.state))
+    }
+}</code></pre></div><div class="code-block"><div class="code-title"><span>code/Sources/Inference/BatchEngine.swift</span><span>swift</span></div><pre><code><span class="tk-kw">private</span> <span class="tk-kw">func</span> decodeStep() {
+    <span class="tk-kw">let</span> batch = running
+    <span class="tk-kw">let</span> tokens = <span class="tk-type">MLXArray</span>(batch.map { <span class="tk-type">Int32</span>($0.last) }).reshaped(batch.count, <span class="tk-num">1</span>)
+
+    <span class="tk-com">// One cache view per layer that spans every running sequence.</span>
+    <span class="tk-kw">let</span> caches = batchCaches(batch.map(\.caches))
+
+    <span class="tk-kw">let</span> logits = loaded.model(tokens, caches: caches)
+    <span class="tk-kw">let</span> next = batch.indices.map { i <span class="tk-kw">in</span> batch[i].sampler(logits[i ..&lt; i + <span class="tk-num">1</span>, -<span class="tk-num">1</span>, <span class="tk-num">0</span>...]) }
+    eval(next)
+    <span class="tk-kw">for</span> (s, token) <span class="tk-kw">in</span> zip(batch, next) {
+        emit(s, token.item(<span class="tk-type">Int</span>.<span class="tk-kw">self</span>))
+    }
+}</code></pre></div>
+<p><strong>Chunked prefill</strong> is the key scheduling decision. A new 2,000-token prompt prefilled in one go would freeze every running sequence for its whole duration. Prefilling 256 tokens per loop iteration instead, between decode steps, means running sequences slow down while a newcomer is admitted, but never stop. Each sequence samples with its own parameters and its own random key, so a greedy request and a creative one can share a batch.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="what-it-buys-on-an-m1" class="scroll-mt-24 text-2xl">What it buys on an M1</h2>
+<div class="prose-block">
+<p>Here is the decode step time for Qwen3.5-0.8B at batch sizes 1 to 8, Release build, base M1:</p>
+<div class="code-block"><pre><code>              B=1        B=2        B=4        B=8
+4-bit       11.8 ms    19.0 ms    34.9 ms    63.9 ms     → 85, 105, 115, 125 tok/s total
+8-bit       18.5 ms    22.2 ms    31.8 ms    60.3 ms     → 54,  90, 126, 133 tok/s total
+bf16        31.5 ms    66.5 ms    69.7 ms    76.5 ms     → 32,  30,  57, 105 tok/s total</code></pre></div>
+<p>Batching helps, but nowhere near the eightfold the theory suggested, and the shape of the curve depends on the precision. The cause is the matrix multiply kernel, measured in isolation on a 14336×1024 weight:</p>
+<div class="code-block"><pre><code>rows     4-bit       8-bit       bf16
+1        142 µs      266 µs      482 µs
+2        248 µs      266 µs     1225 µs
+4        489 µs      428 µs     1223 µs
+8        831 µs      833 µs     1227 µs</code></pre></div>
+<p>MLX picks a different kernel for one row (a matrix-vector kernel that streams the weights at about 52 GB/s, near the M1's limit) and for several rows. For 4-bit weights on this GPU, the multi-row path's cost grows almost linearly from 2 to 8 rows, so batching barely amortizes anything. For 8-bit weights, two rows cost the same as one. For bfloat16, the first extra row costs 2.5×, but then 8 rows cost the same as 2. The chart below plots the measured curves.</p>
+<p>The lesson is not "batching does not work". It is that the benefit is a property of the kernels on your hardware, and you must measure it. On chips with more compute per byte, or with newer MLX kernels, the curve is flatter. Lesson 19 runs into the same table from another direction: speculative decoding is also a multi-row multiply.</p>
+</div>
+<div class="figure" id="viz-batching"><p class="figure-title">Measured throughput versus batch size</p><p class="figure-sub">Total tokens per second for Qwen3.5-0.8B on a base M1, decode step only. Toggle precisions.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="batching-changes-the-numbers" class="scroll-mt-24 text-2xl">Batching changes the numbers</h2>
+<div class="prose-block">
+<p>Running the same eight greedy requests through the serial engine and the batching engine produced identical text for only one of the eight. Is batching broken?</p>
+<p>No. The batched test from Lesson 8 shows logits within tolerance at every step. The multi-row kernel accumulates its sums in a different order than the one-row kernel, so values differ in the last bfloat16 digit, and somewhere in 128 tokens a near-tie flips (Lesson 8). After that, the texts diverge. This is called the <strong>batch invariance</strong> problem: a request's output depends on what else is in the batch. It matters if users expect bit-reproducible results with a seed; kernels that are batch-invariant by design exist, at some cost in speed.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">A decode step's cost is dominated by reading the weights, so running B sequences in one step multiplies useful work by up to B. The engine keeps each sequence's own caches, stacks the token rows for every matmul, and runs attention per sequence. Linear-attention states are stacked along the batch axis. New prompts are prefilled one chunk per loop. On an M1 the gain is real but limited, because MLX's quantized matmul kernel gets slower per row between 2 and 8 rows; and batching changes rounding enough to flip near-ties.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why should a decode step for 8 sequences cost much less than 8 single-sequence steps, in principle?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Attention is skipped in batches</button>
+<button type="button" data-opt="1">The weights, which dominate the step's memory traffic, are read once for all 8</button>
+<button type="button" data-opt="2">Batches use a smaller model</button>
+<button type="button" data-opt="3">The KV caches are shared</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Decode is bandwidth-bound on the weights. Stacking rows reuses each weight read.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>How does this engine avoid padding sequences of different lengths?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It only batches sequences of equal length</button>
+<button type="button" data-opt="1">Matmuls run on stacked rows; attention runs per sequence against each sequence's own cache</button>
+<button type="button" data-opt="2">It truncates long sequences</button>
+<button type="button" data-opt="3">It pads with zeros and masks</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>The expensive part (weights) is batched; the length-dependent part (attention) stays per sequence.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="numeric" data-answer="2.3" data-tolerance="0.05" data-placeholder="×">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>From the measured table: with 8-bit weights, how many times higher is total throughput at B=4 than at B=1? (One decimal.)</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>126 / 54 ≈ 2.33. Far from 4×, but a clear win.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why prefill new prompts in 256-token chunks between decode steps?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It is faster in total</button>
+<button type="button" data-opt="1">So a long new prompt delays the running sequences a little per step instead of freezing them for the whole prefill</button>
+<button type="button" data-opt="2">Prefill cannot exceed 256 tokens</button>
+<button type="button" data-opt="3">To save cache memory</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Interleaving trades a bit of the newcomer's time to first token for steady streaming of everyone else.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A user reports that the same greedy request gives different text depending on server load. What is the most likely cause?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">A cache corruption bug</button>
+<button type="button" data-opt="1">Batch size changes the matmul kernel and its rounding, which can flip a near-tie</button>
+<button type="button" data-opt="2">Greedy decoding is random</button>
+<button type="button" data-opt="3">The tokenizer is not thread-safe</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>That is the batch invariance problem. Check the logit gap at the first difference, as in Lesson 8.</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="14-prompt-caching.html" data-nav-prev>← 14. Prompt caching</a>
+      <a class="btn btn-primary" href="16-mixture-of-experts.html" data-nav-next>16. Mixture of experts →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l15.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>21. Production: tools, metrics and deployment — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l21" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 21 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part IV · Advanced</span>
+      <h1 class="text-4xl leading-tight">21. Production: tools, metrics and deployment</h1>
+      <p class="lead">Finish the server: tool calling in both Qwen formats, streamed correctly; Prometheus metrics; running it as a service; and an honest list of what a production deployment would still need.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Pass tool definitions through the chat template and parse tool calls from both Qwen formats</li>
+<li>Stream responses that may turn into tool calls without leaking partial markup</li>
+<li>Expose metrics that answer the operational questions</li>
+<li>Run the server as a background service on macOS</li>
+<li>Know what is missing for a multi-user deployment</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="tool-calling" class="scroll-mt-24 text-2xl">Tool calling</h2>
+<div class="prose-block">
+<p>A client describes functions the model may call; the model decides to call one by emitting a structured block instead of text; the client runs the function and sends the result back as a <code>tool</code> message. The server's part is to render the tools into the prompt and recognize calls in the output.</p>
+<p>Rendering is done by the chat template, which already knows the model's trained format. Qwen3.5's template, for instance, lists the tools as JSON inside <code>&lt;tools&gt;</code> and instructs the model to reply with:</p>
+<div class="code-block"><pre><code>&lt;tool_call&gt;
+&lt;function=get_weather&gt;
+&lt;parameter=city&gt;
+Oslo
+&lt;/parameter&gt;
+&lt;/function&gt;
+&lt;/tool_call&gt;</code></pre></div>
+<p>Qwen3 uses JSON inside the same tags: <code>&lt;tool_call&gt;{"name": "get_weather", "arguments": {"city": "Oslo"}}&lt;/tool_call&gt;</code>. The parser accepts both:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/ToolCalls.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Extracts tool calls from model output.</span>
+<span class="tk-com">///</span>
+<span class="tk-com">/// Qwen models write calls inside `&lt;tool_call&gt;...&lt;/tool_call&gt;`. Qwen3 puts</span>
+<span class="tk-com">/// JSON inside (`{&quot;name&quot;: ..., &quot;arguments&quot;: {...}}`); Qwen3.5 uses XML-like</span>
+<span class="tk-com">/// tags (`&lt;function=name&gt;&lt;parameter=key&gt;value&lt;/parameter&gt;&lt;/function&gt;`).</span>
+<span class="tk-com">/// Both are accepted. Text before the first call is returned as content.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">enum</span> <span class="tk-type">ToolCallParser</span> {
+    <span class="tk-kw">public</span> <span class="tk-kw">static</span> <span class="tk-kw">let</span> openTag = <span class="tk-str">&quot;&lt;tool_call&gt;&quot;</span>
+    <span class="tk-kw">static</span> <span class="tk-kw">let</span> closeTag = <span class="tk-str">&quot;&lt;/tool_call&gt;&quot;</span>
+
+    <span class="tk-kw">public</span> <span class="tk-kw">static</span> <span class="tk-kw">func</span> parse(_ text: <span class="tk-type">String</span>) -&gt; (content: <span class="tk-type">String</span>, calls: [<span class="tk-type">ToolCall</span>]) {
+        <span class="tk-kw">guard</span> <span class="tk-kw">let</span> first = text.range(of: openTag) <span class="tk-kw">else</span> { <span class="tk-kw">return</span> (text, []) }
+        <span class="tk-kw">let</span> content = <span class="tk-type">String</span>(text[..&lt;first.lowerBound]).trimmingCharacters(<span class="tk-kw">in</span>: .whitespacesAndNewlines)
+        <span class="tk-kw">var</span> calls = [<span class="tk-type">ToolCall</span>]()
+        <span class="tk-kw">var</span> rest = text[first.lowerBound...]
+        <span class="tk-kw">while</span> <span class="tk-kw">let</span> <span class="tk-kw">open</span> = rest.range(of: openTag) {
+            <span class="tk-kw">let</span> afterOpen = rest[<span class="tk-kw">open</span>.upperBound...]
+            <span class="tk-kw">let</span> close = afterOpen.range(of: closeTag)
+            <span class="tk-kw">let</span> body = <span class="tk-type">String</span>(close.map { afterOpen[..&lt;$0.lowerBound] } ?? afterOpen)
+            <span class="tk-kw">if</span> <span class="tk-kw">let</span> call = parseJSON(body) ?? parseXML(body) { calls.append(call) }
+            <span class="tk-kw">guard</span> <span class="tk-kw">let</span> close <span class="tk-kw">else</span> { <span class="tk-kw">break</span> }
+            rest = afterOpen[close.upperBound...]
+        }
+        <span class="tk-kw">return</span> (content, calls)
+    }
+
+    <span class="tk-kw">static</span> <span class="tk-kw">func</span> parseJSON(_ body: <span class="tk-type">String</span>) -&gt; <span class="tk-type">ToolCall</span>? {
+        <span class="tk-kw">guard</span> <span class="tk-kw">let</span> data = body.trimmingCharacters(<span class="tk-kw">in</span>: .whitespacesAndNewlines).data(using: .utf8),
+              <span class="tk-kw">let</span> object = <span class="tk-kw">try</span>? <span class="tk-type">JSONSerialization</span>.jsonObject(with: data) <span class="tk-kw">as</span>? [<span class="tk-type">String</span>: <span class="tk-type">Any</span>],
+              <span class="tk-kw">let</span> name = object[<span class="tk-str">&quot;name&quot;</span>] <span class="tk-kw">as</span>? <span class="tk-type">String</span>
+        <span class="tk-kw">else</span> { <span class="tk-kw">return</span> <span class="tk-kw">nil</span> }
+        <span class="tk-kw">let</span> args = object[<span class="tk-str">&quot;arguments&quot;</span>] ?? [<span class="tk-type">String</span>: <span class="tk-type">Any</span>]()
+        <span class="tk-kw">let</span> encoded = (<span class="tk-kw">try</span>? <span class="tk-type">JSONSerialization</span>.data(withJSONObject: args, options: [.sortedKeys])) ?? <span class="tk-type">Data</span>(<span class="tk-str">&quot;{}&quot;</span>.utf8)
+        <span class="tk-kw">return</span> <span class="tk-type">ToolCall</span>(name: name, arguments: <span class="tk-type">String</span>(decoding: encoded, <span class="tk-kw">as</span>: <span class="tk-type">UTF8</span>.<span class="tk-kw">self</span>))
+    }
+
+    <span class="tk-kw">static</span> <span class="tk-kw">func</span> parseXML(_ body: <span class="tk-type">String</span>) -&gt; <span class="tk-type">ToolCall</span>? {
+        <span class="tk-kw">guard</span> <span class="tk-kw">let</span> function = body.firstMatch(of: /&lt;function=([^&gt;\n]+)&gt;/) <span class="tk-kw">else</span> { <span class="tk-kw">return</span> <span class="tk-kw">nil</span> }
+        <span class="tk-kw">var</span> args = [<span class="tk-type">String</span>: <span class="tk-type">Any</span>]()
+        <span class="tk-kw">for</span> m <span class="tk-kw">in</span> body.matches(of: /&lt;parameter=([^&gt;\n]+)&gt;\n?(.*?)\n?&lt;\/parameter&gt;/.dotMatchesNewlines()) {
+            <span class="tk-kw">let</span> raw = <span class="tk-type">String</span>(m.<span class="tk-num">2</span>)
+            <span class="tk-com">// Values are written as plain text; keep numbers, booleans and</span>
+            <span class="tk-com">// JSON objects typed when they parse as JSON.</span>
+            <span class="tk-kw">if</span> <span class="tk-kw">let</span> data = raw.data(using: .utf8),
+               <span class="tk-kw">let</span> value = <span class="tk-kw">try</span>? <span class="tk-type">JSONSerialization</span>.jsonObject(with: data, options: [.fragmentsAllowed]),
+               !(value <span class="tk-kw">is</span> <span class="tk-type">String</span>) {
+                args[<span class="tk-type">String</span>(m.<span class="tk-num">1</span>)] = value
+            } <span class="tk-kw">else</span> {
+                args[<span class="tk-type">String</span>(m.<span class="tk-num">1</span>)] = raw
+            }
+        }
+        <span class="tk-kw">let</span> encoded = (<span class="tk-kw">try</span>? <span class="tk-type">JSONSerialization</span>.data(withJSONObject: args, options: [.sortedKeys])) ?? <span class="tk-type">Data</span>(<span class="tk-str">&quot;{}&quot;</span>.utf8)
+        <span class="tk-kw">return</span> <span class="tk-type">ToolCall</span>(name: <span class="tk-type">String</span>(function.<span class="tk-num">1</span>), arguments: <span class="tk-type">String</span>(decoding: encoded, <span class="tk-kw">as</span>: <span class="tk-type">UTF8</span>.<span class="tk-kw">self</span>))
+    }
+}</code></pre></div>
+<p>Parameter values in the XML format are plain text, so the parser keeps numbers, booleans and objects typed when they parse as JSON (<code>3</code> becomes <code>3</code>, not <code>"3"</code>). The output is the OpenAI shape, with <code>arguments</code> as a JSON string. Going the other way, clients send earlier tool calls back with string arguments, and the template wants objects, so the route converts them:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/serve/OpenAI.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// OpenAI clients send `arguments` as a JSON string; chat templates want an object.</span>
+<span class="tk-kw">func</span> templateMessage(_ raw: [<span class="tk-type">String</span>: <span class="tk-type">Any</span>]) -&gt; [<span class="tk-type">String</span>: <span class="tk-kw">any</span> <span class="tk-type">Sendable</span>] {
+    <span class="tk-kw">var</span> message = raw
+    <span class="tk-kw">if</span> <span class="tk-kw">let</span> calls = raw[<span class="tk-str">&quot;tool_calls&quot;</span>] <span class="tk-kw">as</span>? [[<span class="tk-type">String</span>: <span class="tk-type">Any</span>]] {
+        message[<span class="tk-str">&quot;tool_calls&quot;</span>] = calls.map { call -&gt; [<span class="tk-type">String</span>: <span class="tk-type">Any</span>] <span class="tk-kw">in</span>
+            <span class="tk-kw">var</span> call = call
+            <span class="tk-kw">if</span> <span class="tk-kw">var</span> function = call[<span class="tk-str">&quot;function&quot;</span>] <span class="tk-kw">as</span>? [<span class="tk-type">String</span>: <span class="tk-type">Any</span>],
+               <span class="tk-kw">let</span> args = function[<span class="tk-str">&quot;arguments&quot;</span>] <span class="tk-kw">as</span>? <span class="tk-type">String</span>,
+               <span class="tk-kw">let</span> data = args.data(using: .utf8),
+               <span class="tk-kw">let</span> object = <span class="tk-kw">try</span>? <span class="tk-type">JSONSerialization</span>.jsonObject(with: data) {
+                function[<span class="tk-str">&quot;arguments&quot;</span>] = object
+                call[<span class="tk-str">&quot;function&quot;</span>] = function
+            }
+            <span class="tk-kw">return</span> call
+        }
+    }
+    <span class="tk-kw">if</span> message[<span class="tk-str">&quot;content&quot;</span>] <span class="tk-kw">is</span> <span class="tk-type">NSNull</span> { message[<span class="tk-str">&quot;content&quot;</span>] = <span class="tk-str">&quot;&quot;</span> }
+    <span class="tk-kw">return</span> message.mapValues(sendableJSON)
+}</code></pre></div>
+<p>The unit tests cover both formats, and a full round trip against Qwen3.5-0.8B works: asked for the weather in Oslo, the model calls <code>get_weather({"city":"Oslo"})</code>, receives <code>{"temp_c": -3, "sky": "snow"}</code>, and answers "The weather in Oslo is currently cold and snowy, with a temperature of -3°C."</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="streaming-tool-calls" class="scroll-mt-24 text-2xl">Streaming tool calls</h2>
+<div class="prose-block">
+<p>Streaming makes tool calls harder: the client must not receive <code>&lt;tool_call&gt;&lt;function=get_wea</code> as content. The route in Lesson 12 handles this when the request includes tools. As soon as streamed text contains a <code>&lt;</code>, it starts buffering. If the buffer turns out not to be the start of <code>&lt;tool_call&gt;</code>, it is released as ordinary content. If it is, buffering continues to the end, and the parsed calls go out as one <code>tool_calls</code> delta with <code>finish_reason: "tool_calls"</code>:</p>
+<div class="code-block"><pre><code>data: {&quot;choices&quot;:[{&quot;index&quot;:0,&quot;delta&quot;:{&quot;tool_calls&quot;:[{&quot;index&quot;:0,&quot;id&quot;:&quot;call_28389224&quot;,&quot;type&quot;:&quot;function&quot;,
+       &quot;function&quot;:{&quot;name&quot;:&quot;get_weather&quot;,&quot;arguments&quot;:&quot;{\&quot;city\&quot;:\&quot;Paris\&quot;}&quot;}}]}}]}
+data: {&quot;choices&quot;:[{&quot;index&quot;:0,&quot;delta&quot;:{},&quot;finish_reason&quot;:&quot;tool_calls&quot;}]}</code></pre></div>
+<p>OpenAI streams call arguments in fragments; sending a complete call in one delta is also valid, and every client accepts it.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="metrics" class="scroll-mt-24 text-2xl">Metrics</h2>
+<div class="prose-block">
+<p>The questions an operator asks are: is it up, how loaded is it, are clients being turned away, how long do they wait for the first token, and is the prompt cache working. A few counters answer them, exposed at <code>/metrics</code> in Prometheus' text format:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/serve/Metrics.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Counters exposed at /metrics in the Prometheus text format.</span>
+<span class="tk-kw">final</span> <span class="tk-kw">class</span> <span class="tk-type">Metrics</span>: <span class="tk-type">Sendable</span> {
+    <span class="tk-kw">struct</span> <span class="tk-type">Values</span> {
+        <span class="tk-kw">var</span> requests = <span class="tk-num">0</span>
+        <span class="tk-kw">var</span> rejected = <span class="tk-num">0</span>
+        <span class="tk-kw">var</span> cancelled = <span class="tk-num">0</span>
+        <span class="tk-kw">var</span> promptTokens = <span class="tk-num">0</span>
+        <span class="tk-kw">var</span> cachedPromptTokens = <span class="tk-num">0</span>
+        <span class="tk-kw">var</span> completionTokens = <span class="tk-num">0</span>
+        <span class="tk-kw">var</span> timeToFirstTokenSum = <span class="tk-num">0.0</span>
+        <span class="tk-kw">var</span> timeToFirstTokenCount = <span class="tk-num">0</span>
+        <span class="tk-kw">var</span> decodeSecondsSum = <span class="tk-num">0.0</span>
+        <span class="tk-kw">var</span> inFlight = <span class="tk-num">0</span>
+    }
+
+    <span class="tk-kw">private</span> <span class="tk-kw">let</span> values = <span class="tk-type">OSAllocatedUnfairLock</span>(initialState: <span class="tk-type">Values</span>())
+
+    <span class="tk-kw">func</span> update(_ body: <span class="tk-attr">@Sendable</span> (<span class="tk-kw">inout</span> <span class="tk-type">Values</span>) -&gt; <span class="tk-type">Void</span>) {
+        values.withLock { body(&amp;$0) }
+    }
+
+    <span class="tk-kw">func</span> render() -&gt; <span class="tk-type">String</span> {
+        <span class="tk-kw">let</span> v = values.withLock { $0 }
+        <span class="tk-kw">return</span> <span class="tk-str">&quot;&quot;&quot;
+            # TYPE qwenserve_requests_total counter
+            qwenserve_requests_total \(v.requests)
+            # TYPE qwenserve_rejected_total counter
+            qwenserve_rejected_total \(v.rejected)
+            # TYPE qwenserve_cancelled_total counter
+            qwenserve_cancelled_total \(v.cancelled)
+            # TYPE qwenserve_prompt_tokens_total counter
+            qwenserve_prompt_tokens_total \(v.promptTokens)
+            # TYPE qwenserve_cached_prompt_tokens_total counter
+            qwenserve_cached_prompt_tokens_total \(v.cachedPromptTokens)
+            # TYPE qwenserve_completion_tokens_total counter
+            qwenserve_completion_tokens_total \(v.completionTokens)
+            # TYPE qwenserve_time_to_first_token_seconds summary
+            qwenserve_time_to_first_token_seconds_sum \(v.timeToFirstTokenSum)
+            qwenserve_time_to_first_token_seconds_count \(v.timeToFirstTokenCount)
+            # TYPE qwenserve_decode_seconds_total counter
+            qwenserve_decode_seconds_total \(v.decodeSecondsSum)
+            # TYPE qwenserve_in_flight gauge
+            qwenserve_in_flight \(v.inFlight)
+
+            &quot;&quot;&quot;</span>
+    }
+}</code></pre></div>
+<p>The route records them by wrapping each request's event stream, so neither the engines nor the HTTP code needed changing:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/serve/main.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Wraps an event stream to record request metrics as events pass through.</span>
+<span class="tk-kw">func</span> instrument(_ events: <span class="tk-type">AsyncThrowingStream</span>&lt;<span class="tk-type">GenerationEvent</span>, <span class="tk-type">Error</span>&gt;) -&gt; <span class="tk-type">AsyncThrowingStream</span>&lt;<span class="tk-type">GenerationEvent</span>, <span class="tk-type">Error</span>&gt; {
+    metrics.update { $0.requests += <span class="tk-num">1</span>; $0.inFlight += <span class="tk-num">1</span> }
+    <span class="tk-kw">let</span> start = <span class="tk-type">Date</span>()
+    <span class="tk-kw">return</span> <span class="tk-type">AsyncThrowingStream</span> { continuation <span class="tk-kw">in</span>
+        <span class="tk-kw">let</span> task = <span class="tk-type">Task</span> {
+            <span class="tk-kw">var</span> first: <span class="tk-type">Date</span>?
+            <span class="tk-kw">var</span> finished = <span class="tk-kw">false</span>
+            <span class="tk-kw">do</span> {
+                <span class="tk-kw">for</span> <span class="tk-kw">try</span> <span class="tk-kw">await</span> event <span class="tk-kw">in</span> events {
+                    <span class="tk-kw">if</span> first == <span class="tk-kw">nil</span>, <span class="tk-kw">case</span> .text = event {
+                        first = <span class="tk-type">Date</span>()
+                        <span class="tk-kw">let</span> ttft = first!.timeIntervalSince(start)
+                        metrics.update { $0.timeToFirstTokenSum += ttft; $0.timeToFirstTokenCount += <span class="tk-num">1</span> }
+                    }
+                    <span class="tk-kw">if</span> <span class="tk-kw">case</span> .finished(<span class="tk-kw">let</span> reason, <span class="tk-kw">let</span> usage) = event {
+                        finished = <span class="tk-kw">true</span>
+                        <span class="tk-kw">let</span> decode = first.map { <span class="tk-type">Date</span>().timeIntervalSince($0) } ?? <span class="tk-num">0</span>
+                        metrics.update {
+                            $0.promptTokens += usage.promptTokens
+                            $0.cachedPromptTokens += usage.cachedTokens
+                            $0.completionTokens += usage.completionTokens
+                            $0.decodeSecondsSum += decode
+                            <span class="tk-kw">if</span> reason == .cancelled { $0.cancelled += <span class="tk-num">1</span> }
+                        }
+                    }
+                    continuation.yield(event)
+                }
+                continuation.finish()
+            } <span class="tk-kw">catch</span> {
+                continuation.finish(throwing: error)
+            }
+            <span class="tk-com">// A client that disconnects never sees the finished event.</span>
+            <span class="tk-kw">let</span> sawFinish = finished
+            metrics.update {
+                $0.inFlight -= <span class="tk-num">1</span>
+                <span class="tk-kw">if</span> !sawFinish { $0.cancelled += <span class="tk-num">1</span> }
+            }
+        }
+        continuation.onTermination = { _ <span class="tk-kw">in</span> task.cancel() }
+    }
+}</code></pre></div>
+<div class="code-block"><pre><code>qwenserve_requests_total 3
+qwenserve_rejected_total 0
+qwenserve_cancelled_total 0
+qwenserve_prompt_tokens_total 886
+qwenserve_cached_prompt_tokens_total 0
+qwenserve_completion_tokens_total 69
+qwenserve_time_to_first_token_seconds_sum 1.556
+qwenserve_time_to_first_token_seconds_count 3
+qwenserve_decode_seconds_total 1.048
+qwenserve_in_flight 0</code></pre></div>
+<p>Average time to first token is <code>sum / count</code>; decode speed is completion tokens divided by decode seconds; the cache hit rate is cached prompt tokens over prompt tokens. A disconnected client never sees its <code>.finished</code> event, so the wrapper counts a stream that ends without one as cancelled.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="running-as-a-service" class="scroll-mt-24 text-2xl">Running as a service</h2>
+<div class="prose-block">
+<p>Build in Release, copy the binary somewhere stable, and let <code>launchd</code> start it at login and restart it if it exits:</p>
+<div class="code-block"><pre><code>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+&lt;!-- ~/Library/LaunchAgents/local.qwenserve.plist --&gt;
+&lt;!DOCTYPE plist PUBLIC &quot;-//Apple//DTD PLIST 1.0//EN&quot; &quot;http://www.apple.com/DTDs/PropertyList-1.0.dtd&quot;&gt;
+&lt;plist version=&quot;1.0&quot;&gt;
+&lt;dict&gt;
+  &lt;key&gt;Label&lt;/key&gt;&lt;string&gt;local.qwenserve&lt;/string&gt;
+  &lt;key&gt;ProgramArguments&lt;/key&gt;
+  &lt;array&gt;
+    &lt;string&gt;/usr/local/bin/serve&lt;/string&gt;
+    &lt;string&gt;/Users/you/models/Qwen3.5-0.8B&lt;/string&gt;
+    &lt;string&gt;--bits&lt;/string&gt;&lt;string&gt;8&lt;/string&gt;
+    &lt;string&gt;--port&lt;/string&gt;&lt;string&gt;8080&lt;/string&gt;
+  &lt;/array&gt;
+  &lt;key&gt;RunAtLoad&lt;/key&gt;&lt;true/&gt;
+  &lt;key&gt;KeepAlive&lt;/key&gt;&lt;true/&gt;
+  &lt;key&gt;StandardOutPath&lt;/key&gt;&lt;string&gt;/tmp/qwenserve.log&lt;/string&gt;
+  &lt;key&gt;StandardErrorPath&lt;/key&gt;&lt;string&gt;/tmp/qwenserve.log&lt;/string&gt;
+&lt;/dict&gt;
+&lt;/plist&gt;</code></pre></div><div class="code-block"><pre><code>launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.qwenserve.plist
+curl -s localhost:8080/health        # ok
+launchctl bootout gui/$(id -u)/local.qwenserve   # stop it</code></pre></div>
+<p>The MLX Metal library is a bundle next to the binary (<code>mlx-swift_Cmlx.bundle</code>); copy it along with the executable, or the server fails the first time it touches the GPU.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="what-is-still-missing" class="scroll-mt-24 text-2xl">What is still missing</h2>
+<div class="prose-block">
+<p>The server is complete for one person or a small trusted group on one machine. Before exposing it more widely, add:</p>
+<ul>
+<li><strong>Authentication and TLS.</strong> Put it behind a reverse proxy that checks API keys and terminates TLS, and keep it bound to localhost.</li>
+<li><strong>A memory budget.</strong> Limit total cache memory across running requests and prompt-cache entries, and reject or queue requests whose context would exceed it, instead of discovering the limit by running out of memory.</li>
+<li><strong>Structured output.</strong> JSON-schema-constrained generation works by masking, at every step, the logits of tokens that would make the output invalid. The sampler from Lesson 10 is the place to add the mask; the hard part is a grammar engine that computes the allowed tokens quickly.</li>
+<li><strong>Reasoning content.</strong> With thinking enabled, separate the <code>&lt;think&gt;</code> block into its own field (several clients expect <code>reasoning_content</code>) rather than mixing it into the answer.</li>
+<li><strong>Several models</strong>, loaded on demand and evicted under memory pressure, with the model chosen by the request's <code>model</code> field.</li>
+</ul>
+<p>You now have every piece: model code you can prove correct, caches for two kinds of attention, a scheduler for one GPU and many clients, two ways to make decode faster, and a method for measuring what each change is worth on the hardware in front of you.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">Tools go into the chat template; the model answers with &lt;tool_call&gt; blocks, JSON in Qwen3 and XML-like tags in Qwen3.5, which the parser turns into OpenAI tool_calls. While streaming, text is buffered from the first possible '&lt;tool_call&gt;' so markup never reaches the client. Counters for requests, rejections, cancellations, tokens and time to first token answer most operational questions. launchd keeps the server running. Authentication, a memory budget and structured output are the next steps.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why does the streaming route buffer text once a '&lt;' appears in a request that has tools?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">To compress the output</button>
+<button type="button" data-opt="1">It may be the start of a &lt;tool_call&gt; block, which must reach the client as a structured tool call, not as partial text</button>
+<button type="button" data-opt="2">To reduce the number of events</button>
+<button type="button" data-opt="3">HTML escaping</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>If the buffer proves not to be a tool call, it is released as content; otherwise the calls are parsed and sent at the end.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A Qwen3.5 parameter value is written as <code>3</code> inside a <code>&lt;parameter=days&gt;</code> block. What does the parser put in the arguments JSON?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">"3" (a string)</button>
+<button type="button" data-opt="1">3 (a number)</button>
+<button type="button" data-opt="2">nothing</button>
+<button type="button" data-opt="3">an error</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Values that parse as JSON numbers, booleans or objects keep their type; other text stays a string.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="numeric" data-answer="0.52" data-tolerance="0.006" data-placeholder="s">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>From the metrics sample: time to first token sum 1.556 s over 3 requests. What is the average, in seconds? (Two decimals.)</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>1.556 / 3 ≈ 0.52 s.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="multi" data-answer="0,1,3">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">select all that apply</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which should be added before exposing the server to untrusted users? Select all that apply.</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Authentication</button>
+<button type="button" data-opt="1">A limit on total cache memory</button>
+<button type="button" data-opt="2">A bigger vocabulary</button>
+<button type="button" data-opt="3">TLS</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Access control, encryption and resource limits are the gaps. The vocabulary belongs to the model.</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="20-performance-engineering.html" data-nav-prev>← 20. Performance engineering</a>
+      <a class="btn btn-primary" href="../index.html" data-nav-next>Finish → Course home</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+
+</body>
+</html>

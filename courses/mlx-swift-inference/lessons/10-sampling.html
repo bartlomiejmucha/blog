@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>10. Sampling — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l10" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 10 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part II · Running Qwen</span>
+      <h1 class="text-4xl leading-tight">10. Sampling</h1>
+      <p class="lead">Logits are scores, not choices. Implement greedy decoding, temperature, top-k, top-p and min-p on the GPU, with reproducible seeds, and learn what each knob does to the distribution.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Turn logits into a probability distribution with temperature</li>
+<li>Implement top-k, top-p and min-p truncation with MLX operations</li>
+<li>Make sampling reproducible with explicit random keys</li>
+<li>Explain why the sampler exposes its filtered distribution</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="from-logits-to-a-distribution" class="scroll-mt-24 text-2xl">From logits to a distribution</h2>
+<div class="prose-block">
+<p>The model's output for the last position is 151,936 logits. Softmax turns them into probabilities. Before the softmax, divide by a <strong>temperature</strong> <code>T</code>:</p>
+<ul>
+<li><code>T = 1</code>: the model's own distribution.</li>
+<li><code>T &lt; 1</code>: differences are magnified, so likely tokens become more likely. Answers get more focused and more repetitive.</li>
+<li><code>T &gt; 1</code>: the distribution flattens, so unlikely tokens get a real chance. Answers get more varied and less coherent.</li>
+<li><code>T → 0</code>: all mass goes to the top token. That is <strong>greedy</strong> decoding, which we special-case as a plain argmax.</li>
+</ul>
+<p>Temperature alone has a problem: the tail. With 150,000 tokens, even tiny probabilities add up to a noticeable chance of drawing nonsense. The truncation methods cut the tail off before drawing.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="truncation-top-k-top-p-min-p" class="scroll-mt-24 text-2xl">Truncation: top-k, top-p, min-p</h2>
+<div class="prose-block">
+<table>
+<tr><th>Method</th><th>Keeps</th><th>Behaviour</th></tr>
+<tr><td>top-k</td><td>the k most likely tokens</td><td>Fixed size. Too few when many tokens are plausible, too many when one is obvious.</td></tr>
+<tr><td>top-p (nucleus)</td><td>the smallest set of most likely tokens whose total probability reaches p</td><td>Adapts: a few tokens when the model is confident, many when it is not.</td></tr>
+<tr><td>min-p</td><td>tokens with probability at least p × the top token's probability</td><td>Adapts to confidence directly; cheap, because it needs no sort.</td></tr>
+</table>
+<p>Try them below on a toy distribution. Notice that min-p and top-p both shrink the kept set when the distribution is peaked (low temperature) and grow it when it is flat, while top-k does not care.</p>
+</div>
+<div class="figure" id="viz-sampling"><p class="figure-title">Sampling controls</p><p class="figure-sub">Adjust temperature and truncation. Faded bars are cut; the rest are renormalized before drawing.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-sampler" class="scroll-mt-24 text-2xl">The sampler</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Sampler.swift</span><span>swift</span></div><pre><code><span class="tk-kw">public</span> <span class="tk-kw">struct</span> <span class="tk-type">SamplingParameters</span>: <span class="tk-type">Sendable</span> {
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> temperature: <span class="tk-type">Float</span> = <span class="tk-num">0</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> topK: <span class="tk-type">Int</span> = <span class="tk-num">0</span>       <span class="tk-com">// 0 disables</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> topP: <span class="tk-type">Float</span> = <span class="tk-num">1</span>     <span class="tk-com">// 1 disables</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> minP: <span class="tk-type">Float</span> = <span class="tk-num">0</span>     <span class="tk-com">// 0 disables</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> seed: <span class="tk-type">UInt64</span>?
+
+    <span class="tk-kw">public</span> <span class="tk-kw">init</span>(temperature: <span class="tk-type">Float</span> = <span class="tk-num">0</span>, topK: <span class="tk-type">Int</span> = <span class="tk-num">0</span>, topP: <span class="tk-type">Float</span> = <span class="tk-num">1</span>, minP: <span class="tk-type">Float</span> = <span class="tk-num">0</span>, seed: <span class="tk-type">UInt64</span>? = <span class="tk-kw">nil</span>) {
+        <span class="tk-kw">self</span>.temperature = temperature
+        <span class="tk-kw">self</span>.topK = topK
+        <span class="tk-kw">self</span>.topP = topP
+        <span class="tk-kw">self</span>.minP = minP
+        <span class="tk-kw">self</span>.seed = seed
+    }
+}</code></pre></div><div class="code-block"><div class="code-title"><span>code/Sources/Inference/Sampler.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// The distribution the sampler draws from, as log-probabilities: the</span>
+<span class="tk-com">/// logits after temperature, top-k, min-p and top-p. Requires</span>
+<span class="tk-com">/// temperature &gt; 0.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">func</span> logProbabilities(_ logits: <span class="tk-type">MLXArray</span>) -&gt; <span class="tk-type">MLXArray</span> {
+    <span class="tk-kw">let</span> p = parameters
+    <span class="tk-kw">let</span> scaled = logits.asType(.float32) / p.temperature
+    <span class="tk-kw">var</span> logprobs = scaled - scaled.logSumExp(axis: -<span class="tk-num">1</span>, keepDims: <span class="tk-kw">true</span>)
+    <span class="tk-kw">let</span> masked = <span class="tk-type">MLXArray</span>(-<span class="tk-type">Float</span>.infinity)
+
+    <span class="tk-kw">if</span> p.topK &gt; <span class="tk-num">0</span> &amp;&amp; p.topK &lt; logprobs.dim(-<span class="tk-num">1</span>) {
+        <span class="tk-com">// The k-th largest value is the cutoff. argPartition puts it at</span>
+        <span class="tk-com">// index vocab-k without fully sorting.</span>
+        <span class="tk-kw">let</span> kth = takeAlong(logprobs, argPartition(logprobs, kth: -p.topK, axis: -<span class="tk-num">1</span>)[.ellipsis, (-p.topK)...(-p.topK)], axis: -<span class="tk-num">1</span>)
+        logprobs = which(logprobs .&lt; kth, masked, logprobs)
+    }
+
+    <span class="tk-kw">if</span> p.minP &gt; <span class="tk-num">0</span> {
+        <span class="tk-com">// Keep tokens whose probability is at least minP times the top one.</span>
+        <span class="tk-kw">let</span> threshold = logprobs.max(axis: -<span class="tk-num">1</span>, keepDims: <span class="tk-kw">true</span>) + log(<span class="tk-type">MLXArray</span>(p.minP))
+        logprobs = which(logprobs .&lt; threshold, masked, logprobs)
+    }
+
+    <span class="tk-kw">if</span> p.topP &lt; <span class="tk-num">1</span> {
+        <span class="tk-com">// Sort descending, keep the smallest prefix whose mass reaches topP.</span>
+        <span class="tk-kw">let</span> order = argSort(-logprobs, axis: -<span class="tk-num">1</span>)
+        <span class="tk-kw">let</span> sorted = takeAlong(logprobs, order, axis: -<span class="tk-num">1</span>)
+        <span class="tk-kw">let</span> cumulative = cumsum(exp(sorted), axis: -<span class="tk-num">1</span>)
+        <span class="tk-com">// A token survives if the mass *before* it is still below topP.</span>
+        <span class="tk-kw">let</span> keep = (cumulative - exp(sorted)) .&lt; p.topP
+        <span class="tk-kw">let</span> filtered = which(keep, sorted, masked)
+        logprobs = putAlong(logprobs, order, values: filtered, axis: -<span class="tk-num">1</span>)
+    }
+
+    <span class="tk-com">// Renormalize what survived.</span>
+    <span class="tk-kw">return</span> logprobs - logprobs.logSumExp(axis: -<span class="tk-num">1</span>, keepDims: <span class="tk-kw">true</span>)
+}</code></pre></div>
+<p>Everything runs on log-probabilities, on the GPU, without leaving MLX:</p>
+<ul>
+<li><strong>Temperature</strong> scales the logits, and subtracting <code>logSumExp</code> turns them into log-probabilities without overflow.</li>
+<li><strong>Top-k</strong> uses <code>argPartition</code>, which puts the k-th largest element in its sorted position without sorting the whole vocabulary, and masks everything below it to −∞.</li>
+<li><strong>Min-p</strong> is one comparison: in log space, "at least p times the top probability" is "at least max + log p".</li>
+<li><strong>Top-p</strong> needs a sort: sort descending, take the cumulative sum of probabilities, keep each token whose preceding mass is still below p (so the token that crosses p is kept), and scatter the mask back to vocabulary order with <code>putAlong</code>.</li>
+<li>The survivors are <strong>renormalized</strong> so they sum to 1 again.</li>
+</ul>
+<p>Why return the distribution instead of just a token? Speculative decoding (Lesson 18) must know the exact probability the sampler would give each token, both for the target model and for the drafter. Exposing <code>logProbabilities</code> makes the sampler's distribution a value the rest of the code can reason about.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="drawing-reproducibly" class="scroll-mt-24 text-2xl">Drawing, reproducibly</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Sampler.swift</span><span>swift</span></div><pre><code><span class="tk-kw">public</span> <span class="tk-kw">mutating</span> <span class="tk-kw">func</span> callAsFunction(_ logits: <span class="tk-type">MLXArray</span>) -&gt; <span class="tk-type">MLXArray</span> {
+    <span class="tk-kw">if</span> parameters.temperature == <span class="tk-num">0</span> {
+        <span class="tk-kw">return</span> argMax(logits, axis: -<span class="tk-num">1</span>)
+    }
+    <span class="tk-kw">return</span> sample(fromLogProbs: logProbabilities(logits))
+}</code></pre></div><div class="code-block"><div class="code-title"><span>code/Sources/Inference/Sampler.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Draws one token from `logprobs` (`[B, vocab]`), using the seeded key</span>
+<span class="tk-com">/// if there is one.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">mutating</span> <span class="tk-kw">func</span> sample(fromLogProbs logprobs: <span class="tk-type">MLXArray</span>) -&gt; <span class="tk-type">MLXArray</span> {
+    <span class="tk-kw">if</span> <span class="tk-kw">let</span> current = key {
+        <span class="tk-kw">let</span> parts = <span class="tk-type">MLXRandom</span>.split(key: current)
+        key = parts.<span class="tk-num">0</span>
+        <span class="tk-kw">return</span> <span class="tk-type">MLXRandom</span>.categorical(logprobs, key: parts.<span class="tk-num">1</span>)
+    }
+    <span class="tk-kw">return</span> <span class="tk-type">MLXRandom</span>.categorical(logprobs)
+}</code></pre></div>
+<p><code>categorical</code> draws an index with probability proportional to <code>exp(logprob)</code>, and −∞ entries can never be drawn. When a request sets <code>seed</code>, the sampler keeps an explicit random key and splits it before every draw: one half becomes the new key, the other is used once. The sequence of draws then depends only on the seed, not on whatever else used the global random state, so the same request with the same seed returns the same text. Without a seed, MLX's global generator is used.</p>
+<p>Two practical notes. Greedy decoding skips all of this and calls <code>argMax</code>, which is both faster and exactly reproducible. And OpenAI's API defaults to temperature 1; the server in this course defaults to 0.7, a common choice for chat with small models.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">Temperature divides the logits before the softmax: below 1 sharpens, above 1 flattens, 0 means greedy. Top-k keeps the k best tokens, top-p the smallest set whose probability reaches p, min-p every token at least p times as likely as the best one. All three work on log-probabilities on the GPU, and the result is renormalized before drawing from it. A split random key makes the whole sequence reproducible.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What does temperature 0.5 do compared with 1.0?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Halves every probability</button>
+<button type="button" data-opt="1">Doubles every logit before the softmax, sharpening the distribution toward the top tokens</button>
+<button type="button" data-opt="2">Keeps only half the tokens</button>
+<button type="button" data-opt="3">Has no effect on greedy decoding only</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Dividing logits by 0.5 doubles them, which magnifies their differences after the softmax.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="numeric" data-answer="3" data-tolerance="0" data-placeholder="tokens">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Probabilities in descending order: 0.50, 0.20, 0.15, 0.10, 0.05. How many tokens does top-p = 0.8 keep?</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>Mass before each token: 0, 0.50, 0.70, 0.85, ... A token is kept while the mass before it is below 0.8: the first three (0.50 + 0.20 + 0.15 = 0.85 ≥ 0.8).</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="numeric" data-answer="3" data-tolerance="0" data-placeholder="tokens">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Same probabilities. How many tokens does min-p = 0.25 keep?</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>Threshold = 0.25 × 0.50 = 0.125. Tokens at or above it: 0.50, 0.20, 0.15. Three.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why does the top-k code use argPartition instead of argSort?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">argSort does not exist in MLX</button>
+<button type="button" data-opt="1">It only needs the k-th largest value, which partitioning finds without sorting all 150,000 entries</button>
+<button type="button" data-opt="2">argPartition is more accurate</button>
+<button type="button" data-opt="3">To support batches</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Partitioning is linear time; a full sort is not, and the order of the kept tokens does not matter.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Two requests with the same prompt, temperature 0.8 and seed 42 return different text. Which is the likely cause in a server built like this one?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Seeds do not work in MLX</button>
+<button type="button" data-opt="1">Something else differs, e.g. one request hit the prompt cache or ran in a batch and got slightly different logits, flipping a near-tie</button>
+<button type="button" data-opt="2">Temperature ignores seeds</button>
+<button type="button" data-opt="3">The tokenizer is random</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>The random draws are reproducible, but they are applied to logits. Any change in how the logits were computed (a different kernel shape, a different cache path) can move a token across a sampling boundary.</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="09-the-generation-loop-and-the-kv-cache.html" data-nav-prev>← 9. The generation loop and the KV cache</a>
+      <a class="btn btn-primary" href="11-an-openai-compatible-api-with-hummingbird.html" data-nav-next>11. An OpenAI-compatible API with Hummingbird →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l10.js" defer></script>
+</body>
+</html>

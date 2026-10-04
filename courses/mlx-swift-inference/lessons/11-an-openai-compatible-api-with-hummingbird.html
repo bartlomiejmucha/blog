@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>11. An OpenAI-compatible API with Hummingbird — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l11" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 11 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part III · The server</span>
+      <h1 class="text-4xl leading-tight">11. An OpenAI-compatible API with Hummingbird</h1>
+      <p class="lead">Put an HTTP front on the engine that speaks the Chat Completions wire format, so every existing OpenAI client and SDK can use your server unchanged.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Set up a Hummingbird router with health, models and chat completion routes</li>
+<li>Decode the Chat Completions request, including fields clients send in several shapes</li>
+<li>Encode responses in the exact JSON shape clients expect</li>
+<li>Return useful errors instead of crashing on bad input</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="why-the-openai-format" class="scroll-mt-24 text-2xl">Why the OpenAI format</h2>
+<div class="prose-block">
+<p>You could invent your own API. Don't. The Chat Completions format has become the common language of LLM servers: the official OpenAI SDKs, LangChain, editor plugins and countless scripts all speak it, and they only need a different base URL to talk to yours. Matching it costs a few Codable structs.</p>
+<p>The server needs four routes:</p>
+<table>
+<tr><th>Route</th><th>Purpose</th></tr>
+<tr><td><code>GET /health</code></td><td>liveness check for scripts and load balancers</td></tr>
+<tr><td><code>GET /v1/models</code></td><td>lists the model id; many clients call it on startup</td></tr>
+<tr><td><code>POST /v1/chat/completions</code></td><td>the real work, streaming or not</td></tr>
+<tr><td><code>GET /metrics</code></td><td>Prometheus counters (Lesson 21)</td></tr>
+</table>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="startup" class="scroll-mt-24 text-2xl">Startup</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/serve/main.swift</span><span>swift</span></div><pre><code><span class="tk-com">// Usage: serve &lt;model-directory&gt; [--name id] [--port 8080] [--bits 4|8|16] [--no-mtp] [--batch N]</span>
+<span class="tk-kw">let</span> args = <span class="tk-type">CommandLine</span>.arguments
+<span class="tk-kw">func</span> option(_ name: <span class="tk-type">String</span>) -&gt; <span class="tk-type">String</span>? {
+    args.firstIndex(of: name).flatMap { args.indices.contains($0 + <span class="tk-num">1</span>) ? args[$0 + <span class="tk-num">1</span>] : <span class="tk-kw">nil</span> }
+}
+<span class="tk-kw">let</span> directory = <span class="tk-type">URL</span>(filePath: args[<span class="tk-num">1</span>])
+<span class="tk-kw">let</span> port = <span class="tk-type">Int</span>(option(<span class="tk-str">&quot;--port&quot;</span>) ?? <span class="tk-str">&quot;&quot;</span>) ?? <span class="tk-num">8080</span>
+<span class="tk-kw">let</span> batchSize = <span class="tk-type">Int</span>(option(<span class="tk-str">&quot;--batch&quot;</span>) ?? <span class="tk-str">&quot;&quot;</span>) ?? <span class="tk-num">1</span>
+
+<span class="tk-kw">let</span> bits = <span class="tk-type">Int</span>(option(<span class="tk-str">&quot;--bits&quot;</span>) ?? <span class="tk-str">&quot;&quot;</span>) ?? <span class="tk-num">4</span>
+<span class="tk-kw">let</span> loaded = <span class="tk-kw">try</span> <span class="tk-kw">await</span> <span class="tk-type">LoadedModel</span>.load(directory: directory, name: option(<span class="tk-str">&quot;--name&quot;</span>), quantizeBits: bits == <span class="tk-num">16</span> ? <span class="tk-kw">nil</span> : bits)
+<span class="tk-kw">let</span> engine: <span class="tk-kw">any</span> <span class="tk-type">InferenceEngine</span> = batchSize &gt; <span class="tk-num">1</span>
+    ? <span class="tk-type">BatchEngine</span>(loaded: loaded, maxBatch: batchSize)
+    : <span class="tk-type">SerialEngine</span>(loaded: loaded, useMTP: !args.contains(<span class="tk-str">&quot;--no-mtp&quot;</span>))
+<span class="tk-kw">let</span> modelName = loaded.name
+<span class="tk-kw">let</span> formatter = <span class="tk-type">PromptFormatter</span>(loaded)
+<span class="tk-kw">let</span> metrics = <span class="tk-type">Metrics</span>()
+print(<span class="tk-str">&quot;loaded \(modelName), listening on 127.0.0.1:\(port)&quot;</span>)</code></pre></div>
+<p>Startup loads the model once, picks an engine (the serial engine with MTP by default, or the batching engine of Lesson 15), and creates the shared objects the routes use. Everything here is created before the server accepts its first connection, so no request ever waits for a model to load.</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/serve/main.swift</span><span>swift</span></div><pre><code><span class="tk-kw">let</span> router = <span class="tk-type">Router</span>()
+
+router.<span class="tk-kw">get</span>(<span class="tk-str">&quot;health&quot;</span>) { _, _ <span class="tk-kw">in</span> <span class="tk-str">&quot;ok&quot;</span> }
+
+router.<span class="tk-kw">get</span>(<span class="tk-str">&quot;metrics&quot;</span>) { _, _ <span class="tk-kw">in</span> metrics.render() }
+
+router.<span class="tk-kw">get</span>(<span class="tk-str">&quot;v1/models&quot;</span>) { _, _ <span class="tk-kw">in</span>
+    <span class="tk-kw">try</span> json(<span class="tk-type">ModelList</span>(data: [.<span class="tk-kw">init</span>(id: modelName)]))
+}</code></pre></div>
+<p>A Hummingbird route is an async closure that receives the request and a context and returns anything that can become a response: a <code>String</code>, or a <code>Response</code> you build yourself. The application at the bottom of the file binds to localhost:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/serve/main.swift</span><span>swift</span></div><pre><code><span class="tk-kw">let</span> app = <span class="tk-type">Application</span>(router: router, configuration: .<span class="tk-kw">init</span>(address: .hostname(<span class="tk-str">&quot;127.0.0.1&quot;</span>, port: port)))
+<span class="tk-kw">try</span> <span class="tk-kw">await</span> app.runService()</code></pre></div>
+<p>Binding to <code>127.0.0.1</code> keeps the server off the network. It has no authentication, so exposing it is a deliberate decision, not a default (Lesson 21).</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="decoding-the-request" class="scroll-mt-24 text-2xl">Decoding the request</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/serve/OpenAI.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Scalar request fields. `messages` and `tools` are read separately as</span>
+<span class="tk-com">/// untyped JSON, because they go straight into the chat template.</span>
+<span class="tk-kw">struct</span> <span class="tk-type">ChatRequest</span>: <span class="tk-type">Decodable</span> {
+    <span class="tk-kw">var</span> model: <span class="tk-type">String</span>?
+    <span class="tk-kw">var</span> stream: <span class="tk-type">Bool</span>?
+    <span class="tk-kw">var</span> temperature: <span class="tk-type">Float</span>?
+    <span class="tk-kw">var</span> topP: <span class="tk-type">Float</span>?
+    <span class="tk-kw">var</span> topK: <span class="tk-type">Int</span>?
+    <span class="tk-kw">var</span> minP: <span class="tk-type">Float</span>?
+    <span class="tk-kw">var</span> seed: <span class="tk-type">UInt64</span>?
+    <span class="tk-kw">var</span> maxTokens: <span class="tk-type">Int</span>?
+    <span class="tk-kw">var</span> maxCompletionTokens: <span class="tk-type">Int</span>?
+    <span class="tk-kw">var</span> stop: <span class="tk-type">Stop</span>?
+    <span class="tk-kw">var</span> enableThinking: <span class="tk-type">Bool</span>?
+
+    <span class="tk-com">/// `stop` may be a single string or a list of strings.</span>
+    <span class="tk-kw">enum</span> <span class="tk-type">Stop</span>: <span class="tk-type">Decodable</span> {
+        <span class="tk-kw">case</span> one(<span class="tk-type">String</span>)
+        <span class="tk-kw">case</span> many([<span class="tk-type">String</span>])
+
+        <span class="tk-kw">init</span>(from decoder: <span class="tk-type">Decoder</span>) <span class="tk-kw">throws</span> {
+            <span class="tk-kw">let</span> c = <span class="tk-kw">try</span> decoder.singleValueContainer()
+            <span class="tk-kw">if</span> <span class="tk-kw">let</span> s = <span class="tk-kw">try</span>? c.decode(<span class="tk-type">String</span>.<span class="tk-kw">self</span>) { <span class="tk-kw">self</span> = .one(s) } <span class="tk-kw">else</span> { <span class="tk-kw">self</span> = .many(<span class="tk-kw">try</span> c.decode([<span class="tk-type">String</span>].<span class="tk-kw">self</span>)) }
+        }
+
+        <span class="tk-kw">var</span> list: [<span class="tk-type">String</span>] {
+            <span class="tk-kw">switch</span> <span class="tk-kw">self</span> {
+            <span class="tk-kw">case</span> .one(<span class="tk-kw">let</span> s): [s]
+            <span class="tk-kw">case</span> .many(<span class="tk-kw">let</span> l): l
+            }
+        }
+    }
+}</code></pre></div>
+<p>Two details worth copying:</p>
+<ul>
+<li><strong>Snake case without coding keys.</strong> The shared decoder uses <code>convertFromSnakeCase</code>, so <code>max_completion_tokens</code> lands in <code>maxCompletionTokens</code>. The encoder does the reverse for responses.</li>
+<li><strong>Fields with several shapes.</strong> OpenAI accepts <code>stop</code> as a string or a list. A small enum with a custom <code>init(from:)</code> accepts both. Clients rely on such details, and a strict decoder that rejects a valid request is a compatibility bug.</li>
+</ul>
+<p><code>messages</code> and <code>tools</code> are not in this struct. Their contents go straight into the Jinja chat template, which wants untyped dictionaries, and modelling every possible message shape (text, tool calls, tool results, image parts) in Swift types would only be converted back again. The route reads them separately with <code>JSONSerialization</code>:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/serve/main.swift</span><span>swift</span></div><pre><code>router.post(<span class="tk-str">&quot;v1/chat/completions&quot;</span>) { request, context -&gt; <span class="tk-type">Response</span> <span class="tk-kw">in</span>
+    <span class="tk-kw">let</span> body = <span class="tk-kw">try</span> <span class="tk-kw">await</span> request.body.collect(upTo: <span class="tk-num">4</span> &lt;&lt; <span class="tk-num">20</span>)
+    <span class="tk-kw">let</span> chat: <span class="tk-type">ChatRequest</span>
+    <span class="tk-kw">let</span> messages: [[<span class="tk-type">String</span>: <span class="tk-type">Any</span>]]
+    <span class="tk-kw">let</span> tools: [[<span class="tk-type">String</span>: <span class="tk-type">Any</span>]]?
+    <span class="tk-kw">do</span> {
+        chat = <span class="tk-kw">try</span> jsonDecoder.decode(<span class="tk-type">ChatRequest</span>.<span class="tk-kw">self</span>, from: body)
+        <span class="tk-kw">let</span> raw = <span class="tk-kw">try</span> <span class="tk-type">JSONSerialization</span>.jsonObject(with: <span class="tk-type">Data</span>(buffer: body)) <span class="tk-kw">as</span>? [<span class="tk-type">String</span>: <span class="tk-type">Any</span>] ?? [:]
+        <span class="tk-kw">guard</span> <span class="tk-kw">let</span> m = raw[<span class="tk-str">&quot;messages&quot;</span>] <span class="tk-kw">as</span>? [[<span class="tk-type">String</span>: <span class="tk-type">Any</span>]], !m.isEmpty <span class="tk-kw">else</span> { <span class="tk-kw">throw</span> <span class="tk-type">ServeError</span>.noMessages }
+        messages = m
+        tools = raw[<span class="tk-str">&quot;tools&quot;</span>] <span class="tk-kw">as</span>? [[<span class="tk-type">String</span>: <span class="tk-type">Any</span>]]
+    } <span class="tk-kw">catch</span> {
+        <span class="tk-kw">return</span> <span class="tk-kw">try</span> json(<span class="tk-type">ErrorBody</span>(error: .<span class="tk-kw">init</span>(message: <span class="tk-str">&quot;\(error)&quot;</span>, type: <span class="tk-str">&quot;invalid_request_error&quot;</span>)), status: .badRequest)
+    }
+
+    <span class="tk-kw">let</span> prompt = <span class="tk-kw">try</span> formatter.render(
+        messages: messages.map(templateMessage),
+        tools: tools?.map { $0.mapValues(sendableJSON) },
+        enableThinking: chat.enableThinking ?? <span class="tk-kw">false</span>)
+    <span class="tk-kw">let</span> expectTools = !(tools ?? []).isEmpty
+    <span class="tk-kw">let</span> generation = <span class="tk-type">GenerationRequest</span>(
+        prompt: prompt,
+        parameters: <span class="tk-type">SamplingParameters</span>(
+            temperature: chat.temperature ?? <span class="tk-num">0.7</span>, topK: chat.topK ?? <span class="tk-num">0</span>, topP: chat.topP ?? <span class="tk-num">1</span>,
+            minP: chat.minP ?? <span class="tk-num">0</span>, seed: chat.seed),
+        maxTokens: chat.maxCompletionTokens ?? chat.maxTokens ?? <span class="tk-num">512</span>,
+        stop: chat.stop?.list ?? [])</code></pre></div>
+<p>The body size is capped at 4 MB before anything is parsed, malformed JSON or an empty message list returns HTTP 400 with an OpenAI-style error body, and missing sampling fields get defaults. The result is a <code>GenerationRequest</code>: token ids, sampling parameters, a token limit and stop strings. That is everything the engine needs, and nothing about HTTP.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="submitting-and-answering" class="scroll-mt-24 text-2xl">Submitting and answering</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/serve/main.swift</span><span>swift</span></div><pre><code><span class="tk-kw">let</span> submitted: <span class="tk-type">AsyncThrowingStream</span>&lt;<span class="tk-type">GenerationEvent</span>, <span class="tk-type">Error</span>&gt;
+<span class="tk-kw">do</span> {
+    submitted = <span class="tk-kw">try</span> engine.submit(generation)
+} <span class="tk-kw">catch</span> <span class="tk-type">EngineError</span>.queueFull {
+    metrics.update { $0.rejected += <span class="tk-num">1</span> }
+    <span class="tk-kw">return</span> <span class="tk-kw">try</span> json(<span class="tk-type">ErrorBody</span>(error: .<span class="tk-kw">init</span>(message: <span class="tk-str">&quot;server busy, retry later&quot;</span>, type: <span class="tk-str">&quot;rate_limit&quot;</span>)), status: .tooManyRequests)
+}
+
+<span class="tk-kw">let</span> id = <span class="tk-str">&quot;chatcmpl-&quot;</span> + <span class="tk-type">UUID</span>().uuidString.prefix(<span class="tk-num">12</span>).lowercased()
+<span class="tk-kw">let</span> created = <span class="tk-type">Int</span>(<span class="tk-type">Date</span>().timeIntervalSince1970)
+<span class="tk-kw">let</span> events = instrument(submitted)</code></pre></div>
+<p><code>engine.submit</code> returns immediately with an <code>AsyncThrowingStream</code> of events: text pieces, then one <code>.finished</code> with the reason and token counts. If the engine's queue is full it throws, and the client gets HTTP 429 at once. <code>instrument</code> wraps the stream to record metrics (Lesson 21).</p>
+<p>A non-streaming request simply collects the stream:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/serve/main.swift</span><span>swift</span></div><pre><code><span class="tk-kw">var</span> text = <span class="tk-str">&quot;&quot;</span>
+<span class="tk-kw">var</span> finish = <span class="tk-type">FinishReason</span>.length
+<span class="tk-kw">var</span> usage = <span class="tk-type">Usage</span>(promptTokens: <span class="tk-num">0</span>, completionTokens: <span class="tk-num">0</span>, cachedTokens: <span class="tk-num">0</span>)
+<span class="tk-kw">for</span> <span class="tk-kw">try</span> <span class="tk-kw">await</span> event <span class="tk-kw">in</span> events {
+    <span class="tk-kw">switch</span> event {
+    <span class="tk-kw">case</span> .text(<span class="tk-kw">let</span> t): text += t
+    <span class="tk-kw">case</span> .finished(<span class="tk-kw">let</span> r, <span class="tk-kw">let</span> u): finish = r; usage = u
+    }
+}
+<span class="tk-kw">let</span> (content, calls) = expectTools ? <span class="tk-type">ToolCallParser</span>.parse(text) : (text, [])
+<span class="tk-kw">return</span> <span class="tk-kw">try</span> json(<span class="tk-type">ChatCompletion</span>(
+    id: id, created: created, model: modelName,
+    choices: [.<span class="tk-kw">init</span>(
+        message: .<span class="tk-kw">init</span>(role: <span class="tk-str">&quot;assistant&quot;</span>, content: calls.isEmpty ? text : content,
+                       toolCalls: calls.isEmpty ? <span class="tk-kw">nil</span> : toolCallBodies(calls)),
+        finishReason: calls.isEmpty ? finish.rawValue : <span class="tk-str">&quot;tool_calls&quot;</span>)],
+    usage: usageBody(usage)))</code></pre></div>
+<p>and encodes it in the response shape clients expect:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/serve/OpenAI.swift</span><span>swift</span></div><pre><code><span class="tk-kw">struct</span> <span class="tk-type">ChatCompletion</span>: <span class="tk-type">Encodable</span> {
+    <span class="tk-kw">struct</span> <span class="tk-type">Choice</span>: <span class="tk-type">Encodable</span> {
+        <span class="tk-kw">var</span> index = <span class="tk-num">0</span>
+        <span class="tk-kw">var</span> message: <span class="tk-type">ChatMessage</span>
+        <span class="tk-kw">var</span> finishReason: <span class="tk-type">String</span>
+    }
+    <span class="tk-kw">var</span> id: <span class="tk-type">String</span>
+    <span class="tk-kw">var</span> object = <span class="tk-str">&quot;chat.completion&quot;</span>
+    <span class="tk-kw">var</span> created: <span class="tk-type">Int</span>
+    <span class="tk-kw">var</span> model: <span class="tk-type">String</span>
+    <span class="tk-kw">var</span> choices: [<span class="tk-type">Choice</span>]
+    <span class="tk-kw">var</span> usage: <span class="tk-type">UsageBody</span>
+}</code></pre></div><div class="code-block"><div class="code-title"><span>code/Sources/serve/main.swift</span><span>swift</span></div><pre><code><span class="tk-kw">func</span> json(_ value: <span class="tk-kw">some</span> <span class="tk-type">Encodable</span>, status: <span class="tk-type">HTTPResponse</span>.<span class="tk-type">Status</span> = .ok) <span class="tk-kw">throws</span> -&gt; <span class="tk-type">Response</span> {
+    <span class="tk-type">Response</span>(status: status, headers: [.contentType: <span class="tk-str">&quot;application/json&quot;</span>],
+             body: <span class="tk-type">ResponseBody</span>(byteBuffer: <span class="tk-type">ByteBuffer</span>(data: <span class="tk-kw">try</span> jsonEncoder.encode(value))))
+}</code></pre></div>
+<p>The <code>finish_reason</code> values matter to clients: <code>stop</code> means the model ended its turn or hit a stop string, <code>length</code> means the token limit cut it off, and <code>tool_calls</code> means the model wants a function called. <code>usage.prompt_tokens_details.cached_tokens</code> reports how much of the prompt the cache covered (Lesson 14).</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="try-it-with-an-sdk" class="scroll-mt-24 text-2xl">Try it with an SDK</h2>
+<div class="prose-block">
+<div class="code-block"><pre><code>from openai import OpenAI
+client = OpenAI(base_url=&quot;http://localhost:8080/v1&quot;, api_key=&quot;unused&quot;)
+reply = client.chat.completions.create(
+    model=&quot;qwen3.5-0.8b&quot;,
+    messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;One sentence on unified memory.&quot;}],
+    temperature=0,
+)
+print(reply.choices[0].message.content)</code></pre></div>
+<p>The SDK requires an API key and a model name; the server ignores both. Everything else, including streaming in the next lesson, works without changes.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">Hummingbird maps routes to async closures. The chat route decodes the request, renders the prompt, submits a GenerationRequest to the engine, and either streams or collects the resulting events. Snake-case JSON strategies keep the Swift types idiomatic while matching OpenAI's field names exactly.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A client sends <code>"stop": "###"</code> and your decoder only accepts arrays. What happens?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">The stop string is ignored</button>
+<button type="button" data-opt="1">The request fails to decode and the client gets HTTP 400, though it was valid by OpenAI's rules</button>
+<button type="button" data-opt="2">The server crashes</button>
+<button type="button" data-opt="3">Nothing; JSON decoders convert automatically</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Codable is strict about types. Accepting every shape the official API accepts is part of being compatible.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why does the route read <code>messages</code> with JSONSerialization instead of a Codable struct?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Codable cannot decode arrays</button>
+<button type="button" data-opt="1">The messages go directly into the Jinja template, which wants untyped dictionaries; typed structs would be converted straight back</button>
+<button type="button" data-opt="2">JSONSerialization is faster</button>
+<button type="button" data-opt="3">To support XML</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Messages can contain text, tool calls, tool results and more. Passing them through untouched supports all of them with no extra code.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="fill" data-answer="length" data-placeholder="value">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">type the term</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Which <code>finish_reason</code> tells a client that generation was cut off by the token limit?</p></div>
+<div class="note text-sm" data-ex-explain hidden><p><code>length</code>. Clients often show a "continue" option when they see it.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why does the server bind to 127.0.0.1 by default?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It is faster</button>
+<button type="button" data-opt="1">The server has no authentication, so it should not be reachable from the network unless you choose that</button>
+<button type="button" data-opt="2">Hummingbird cannot bind elsewhere</button>
+<button type="button" data-opt="3">IPv6 is not supported</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Anyone who can reach an unauthenticated inference server can use your GPU. Listening on localhost only is the safe default.</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="10-sampling.html" data-nav-prev>← 10. Sampling</a>
+      <a class="btn btn-primary" href="12-streaming-and-cancellation.html" data-nav-next>12. Streaming and cancellation →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+
+</body>
+</html>

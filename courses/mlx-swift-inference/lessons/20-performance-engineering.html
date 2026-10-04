@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>20. Performance engineering — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l20" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 20 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part IV · Advanced</span>
+      <h1 class="text-4xl leading-tight">20. Performance engineering</h1>
+      <p class="lead">Measure before optimizing, and measure correctly. Collect every performance lesson from building this server into one method: what to time, how to keep the numbers honest, and which changes actually moved them.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Benchmark inference code without fooling yourself</li>
+<li>Break a decode step into components and time each one</li>
+<li>Know which optimizations paid off in this server, and by how much</li>
+<li>Keep memory use under control on a small machine</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="keep-the-numbers-honest" class="scroll-mt-24 text-2xl">Keep the numbers honest</h2>
+<div class="prose-block">
+<p>Every misleading number met while building this course came from one of these:</p>
+<ul>
+<li><strong>Debug builds.</strong> 36 vs 89 tokens per second for the same decode. Debug inflates CPU overhead, which changes not just absolute numbers but conclusions: MTP looked like a 1.4× win in Debug and was a slowdown at 4 bits in Release.</li>
+<li><strong>Laziness.</strong> Timing code that builds a graph without evaluating it measures nothing. Every timed region must end in <code>eval</code> or <code>item</code>.</li>
+<li><strong>Warm-up.</strong> The first call to a kernel includes compiling and caching it. The 4096×4096 matmul in Lesson 3 took 298 ms cold and 94 ms warm.</li>
+<li><strong>Noise.</strong> The M1 in a fanless laptop throttles when hot; repeated runs varied by about ±10%. Once, a run reversed a result entirely, while the disk was nearly full and the system was paging. Repeat measurements, alternate the variants you compare, and look at all runs, not the best one.</li>
+</ul>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="time-the-parts" class="scroll-mt-24 text-2xl">Time the parts</h2>
+<div class="prose-block">
+<p>End-to-end tokens per second tells you that something is slow, not what. The <code>infer</code> tool's <code>bench</code> mode times the components of a speculative step separately:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/infer/main.swift</span><span>swift</span></div><pre><code><span class="tk-kw">if</span> mode == <span class="tk-str">&quot;bench&quot;</span> {
+    <span class="tk-kw">func</span> time(_ label: <span class="tk-type">String</span>, _ body: () -&gt; <span class="tk-type">Void</span>) {
+        body()
+        <span class="tk-kw">let</span> t0 = <span class="tk-type">Date</span>()
+        <span class="tk-kw">for</span> _ <span class="tk-kw">in</span> <span class="tk-num">0</span> ..&lt; <span class="tk-num">30</span> { body() }
+        print(label, <span class="tk-type">String</span>(format: <span class="tk-str">&quot;%.1f ms&quot;</span>, <span class="tk-type">Date</span>().timeIntervalSince(t0) / <span class="tk-num">30</span> * <span class="tk-num">1000</span>))
+    }
+    <span class="tk-kw">let</span> caches = model.makeCaches()
+    _ = model(<span class="tk-type">MLXArray</span>(prompt.map(<span class="tk-type">Int32</span>.<span class="tk-kw">init</span>)).reshaped(<span class="tk-num">1</span>, -<span class="tk-num">1</span>), caches: caches)
+    eval(caches.flatMap(\.state))
+    <span class="tk-kw">let</span> one = <span class="tk-type">MLXArray</span>([<span class="tk-type">Int32</span>(<span class="tk-num">100</span>)]).reshaped(<span class="tk-num">1</span>, <span class="tk-num">1</span>)
+    <span class="tk-kw">let</span> two = <span class="tk-type">MLXArray</span>([<span class="tk-type">Int32</span>(<span class="tk-num">100</span>), <span class="tk-type">Int32</span>(<span class="tk-num">200</span>)]).reshaped(<span class="tk-num">1</span>, <span class="tk-num">2</span>)
+    time(<span class="tk-str">&quot;target 1 token&quot;</span>) { <span class="tk-kw">let</span> l = model(one, caches: caches); eval(l); <span class="tk-kw">for</span> c <span class="tk-kw">in</span> caches { <span class="tk-kw">if</span> <span class="tk-kw">let</span> k = c <span class="tk-kw">as</span>? <span class="tk-type">KVCache</span> { k.trim(<span class="tk-num">1</span>) } } }
+    time(<span class="tk-str">&quot;target 2 tokens kernel&quot;</span>) { <span class="tk-kw">let</span> l = model(two, caches: caches); eval(l)
+        <span class="tk-kw">for</span> c <span class="tk-kw">in</span> caches { <span class="tk-kw">if</span> <span class="tk-kw">let</span> k = c <span class="tk-kw">as</span>? <span class="tk-type">KVCache</span> { k.trim(<span class="tk-num">2</span>) } } }
+    time(<span class="tk-str">&quot;target 2 tokens snapshots&quot;</span>) {
+        <span class="tk-kw">for</span> <span class="tk-kw">case</span> <span class="tk-kw">let</span> c <span class="tk-kw">as</span> <span class="tk-type">LinearCache</span> <span class="tk-kw">in</span> caches { c.recordSnapshots = <span class="tk-kw">true</span> }
+        <span class="tk-kw">let</span> l = model(two, caches: caches); eval(l)
+        <span class="tk-kw">for</span> <span class="tk-kw">case</span> <span class="tk-kw">let</span> c <span class="tk-kw">as</span> <span class="tk-type">LinearCache</span> <span class="tk-kw">in</span> caches { c.recordSnapshots = <span class="tk-kw">false</span> }
+        <span class="tk-kw">for</span> c <span class="tk-kw">in</span> caches { c.trim(<span class="tk-num">1</span>) }; <span class="tk-kw">for</span> c <span class="tk-kw">in</span> caches { <span class="tk-kw">if</span> <span class="tk-kw">let</span> k = c <span class="tk-kw">as</span>? <span class="tk-type">KVCache</span> { k.trim(<span class="tk-num">1</span>) } } }
+    <span class="tk-kw">let</span> mtp = model.mtp!; <span class="tk-kw">let</span> mc = mtp.makeCaches()
+    <span class="tk-kw">let</span> h = <span class="tk-type">MLXArray</span>.zeros([<span class="tk-num">1</span>, <span class="tk-num">1</span>, model.config.hiddenSize], dtype: .bfloat16)
+    time(<span class="tk-str">&quot;mtp head + lm_head&quot;</span>) { <span class="tk-kw">let</span> o = model.logits(mtp(embeddings: model.embed(one), hidden: h, caches: mc)); eval(argMax(o, axis: -<span class="tk-num">1</span>)); mc[<span class="tk-num">0</span>].trim(<span class="tk-num">1</span>) }
+    time(<span class="tk-str">&quot;lm_head only&quot;</span>) { eval(argMax(model.logits(h), axis: -<span class="tk-num">1</span>)) }
+    exit(<span class="tk-num">0</span>)
+}</code></pre></div>
+<div class="code-block"><pre><code>Release, Qwen3.5-0.8B 4-bit, base M1:
+target 1 token              12.0 ms
+target 2 tokens             16.8 ms
+target 2 tokens + snapshots 17.9 ms
+MTP head + output proj.      3.0 ms
+output projection only       2.6 ms</code></pre></div>
+<p>Two findings fall straight out. The output projection alone is 2.6 ms of a 12 ms step, 22%: Qwen3.5's 248,320-token vocabulary is expensive, for the main model and for the drafter. And the 2-token pass costs 1.4× one token, which sent the investigation down to single kernels:</p>
+<div class="code-block"><pre><code>mx.quantized_matmul, 14336×1024 weight, average over many calls:
+rows   4-bit     8-bit     bf16
+1      142 µs    266 µs     482 µs
+2      248 µs    266 µs    1225 µs
+8      831 µs    833 µs    1227 µs</code></pre></div>
+<p>That one table explains the batching results in Lesson 15 and the MTP results in Lesson 19. When a result surprises you, keep zooming in until a measurement explains it.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="what-paid-off" class="scroll-mt-24 text-2xl">What paid off</h2>
+<div class="prose-block">
+<table>
+<tr><th>Change</th><th>Effect (base M1)</th><th>Lesson</th></tr>
+<tr><td>Release instead of Debug build</td><td>36 → 89 tok/s</td><td>3</td></tr>
+<tr><td>Metal kernel for the gated delta recurrence</td><td>512-token prefill 2323 → 754 ms</td><td>17</td></tr>
+<tr><td>Kernel history output for rollback snapshots</td><td>2-token verify +15 ms → +1 ms</td><td>19</td></tr>
+<tr><td>Queue step n+1 before reading token n (asyncEval)</td><td>12.15 → 10.9 ms per token</td><td>9</td></tr>
+<tr><td>One synchronization per speculative step</td><td>sampled MTP 30.8 → 44.3 tok/s (Debug)</td><td>19</td></tr>
+<tr><td>8-bit weights for MTP</td><td>MTP 0.94× → 1.31× over plain</td><td>19</td></tr>
+<tr><td>Prompt cache with the right snapshot point</td><td>turn-2 time to first token 3.25 → 0.97 s</td><td>14</td></tr>
+<tr><td>Cancellation on disconnect</td><td>next request served in 0.2 s instead of waiting</td><td>12</td></tr>
+</table>
+<p>The pipelining measurement, repeated five times in alternation, was the most stable result in the course: 10.8 to 11.0 ms per token with pipelining, 12.1 to 12.2 without.</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/infer/main.swift</span><span>swift</span></div><pre><code><span class="tk-kw">if</span> mode == <span class="tk-str">&quot;perf&quot;</span> {
+    <span class="tk-com">// 1. Decode with and without queueing the next step before reading the current token.</span>
+    <span class="tk-kw">let</span> p = <span class="tk-type">Array</span>(prompt.prefix(<span class="tk-num">16</span>))
+    <span class="tk-kw">for</span> pipelined <span class="tk-kw">in</span> [<span class="tk-kw">true</span>, <span class="tk-kw">false</span>] {
+        <span class="tk-kw">let</span> caches = model.makeCaches()
+        _ = model(<span class="tk-type">MLXArray</span>(p.map(<span class="tk-type">Int32</span>.<span class="tk-kw">init</span>)).reshaped(<span class="tk-num">1</span>, -<span class="tk-num">1</span>), caches: caches)
+        <span class="tk-kw">var</span> token = <span class="tk-type">MLXArray</span>([<span class="tk-type">Int32</span>(<span class="tk-num">1</span>)]).reshaped(<span class="tk-num">1</span>, <span class="tk-num">1</span>)
+        <span class="tk-kw">let</span> n = <span class="tk-num">100</span>
+        <span class="tk-kw">let</span> t0 = <span class="tk-type">Date</span>()
+        <span class="tk-kw">if</span> pipelined {
+            <span class="tk-kw">var</span> next = argMax(model(token, caches: caches)[<span class="tk-num">0</span>..., -<span class="tk-num">1</span>, <span class="tk-num">0</span>...], axis: -<span class="tk-num">1</span>).reshaped(<span class="tk-num">1</span>, <span class="tk-num">1</span>)
+            asyncEval(next)
+            <span class="tk-kw">for</span> _ <span class="tk-kw">in</span> <span class="tk-num">0</span> ..&lt; n {
+                <span class="tk-kw">let</span> current = next
+                next = argMax(model(current, caches: caches)[<span class="tk-num">0</span>..., -<span class="tk-num">1</span>, <span class="tk-num">0</span>...], axis: -<span class="tk-num">1</span>).reshaped(<span class="tk-num">1</span>, <span class="tk-num">1</span>)
+                asyncEval(next)
+                _ = current.item(<span class="tk-type">Int</span>.<span class="tk-kw">self</span>)
+            }
+        } <span class="tk-kw">else</span> {
+            <span class="tk-kw">for</span> _ <span class="tk-kw">in</span> <span class="tk-num">0</span> ..&lt; n {
+                token = argMax(model(token, caches: caches)[<span class="tk-num">0</span>..., -<span class="tk-num">1</span>, <span class="tk-num">0</span>...], axis: -<span class="tk-num">1</span>).reshaped(<span class="tk-num">1</span>, <span class="tk-num">1</span>)
+                _ = token.item(<span class="tk-type">Int</span>.<span class="tk-kw">self</span>)
+            }
+        }
+        print(<span class="tk-str">&quot;decode pipelined=\(pipelined): \(String(format: &quot;</span>%.2f<span class="tk-str">&quot;, Date().timeIntervalSince(t0) / Double(n) * 1000)) ms/token&quot;</span>)
+    }</code></pre></div>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="memory" class="scroll-mt-24 text-2xl">Memory</h2>
+<div class="prose-block">
+<p>On an 8 GB machine, memory is as much a constraint as speed. The numbers to know:</p>
+<ul>
+<li><strong>Loading peaks above steady state.</strong> Quantizing on load reads the bfloat16 weights first: Qwen3.5-0.8B peaks at about 2 GB and settles at about 0.5 GB. A pre-quantized checkpoint avoids the peak but, for Qwen3.5, loses the MTP head.</li>
+<li><strong>MLX keeps freed buffers.</strong> For speed, MLX caches GPU buffers it has freed rather than returning them to the system. The engine calls <code>MLX.Memory.clearCache()</code> after each request so a long prompt's temporary buffers do not stay allocated forever. <code>MLX.Memory.activeMemory</code> and <code>peakMemory</code> report usage; log them during load tests.</li>
+<li><strong>Caches dominate at long context.</strong> Lesson 9's calculator. The prompt cache multiplies it: four stored long conversations can outweigh the model.</li>
+</ul>
+<p>For a deeper view, Xcode's Instruments has a Metal System Trace template that shows every kernel on the GPU timeline, which is how you would find, for example, gaps where the GPU waits for the CPU.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">Measure Release builds, warm up, synchronize with eval, repeat, and watch for thermal and system noise. Time components in isolation: the 1-token and 2-token passes, the output projection, the drafter, single kernels at different row counts. In this server the big wins were Release over Debug (2.5×), the custom linear-attention kernel (3× prefill), CPU/GPU pipelining (11%), removing GPU synchronizations, and choosing weight precision to suit the kernels.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>You time <code>let y = model(x, caches: c)</code> with no eval afterwards and get 0.05 ms. What did you measure?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">A very fast model</button>
+<button type="button" data-opt="1">Only the time to build the lazy graph; the GPU work has not happened</button>
+<button type="button" data-opt="2">The cache lookup</button>
+<button type="button" data-opt="3">The kernel compile time</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Without eval or item, MLX has done nothing yet.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="numeric" data-answer="22" data-tolerance="0.6" data-placeholder="%">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>The output projection takes 2.6 ms of a 12.0 ms decode step. What percentage is that? (Nearest whole percent.)</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>2.6 / 12.0 ≈ 21.7%, about 22%. A large vocabulary is a real cost at small model sizes.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Two variants measure 11.2 and 10.6 ms per token in one run each, on a fanless laptop. What should you conclude?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">The second is 5% faster</button>
+<button type="button" data-opt="1">Nothing yet; repeat both several times, alternating, because thermal noise is around ±10%</button>
+<button type="button" data-opt="2">The first is broken</button>
+<button type="button" data-opt="3">Switch to Debug for stable numbers</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>A difference smaller than the run-to-run noise needs repeated, interleaved measurements before it means anything.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why does the engine call MLX.Memory.clearCache() after each request?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">To reset the model weights</button>
+<button type="button" data-opt="1">MLX keeps freed GPU buffers for reuse; clearing returns a long request's temporary buffers to the system</button>
+<button type="button" data-opt="2">To empty the prompt cache</button>
+<button type="button" data-opt="3">To force recompiling kernels</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Buffer caching is a speed optimization that would otherwise keep peak allocations alive.</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="19-mtp-qwen3-5-s-built-in-drafter.html" data-nav-prev>← 19. MTP: Qwen3.5's built-in drafter</a>
+      <a class="btn btn-primary" href="21-production-tools-metrics-and-deployment.html" data-nav-next>21. Production: tools, metrics and deployment →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+
+</body>
+</html>

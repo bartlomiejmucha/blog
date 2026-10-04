@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>17. Qwen3.5's hybrid architecture — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l17" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 17 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part IV · Advanced</span>
+      <h1 class="text-4xl leading-tight">17. Qwen3.5's hybrid architecture</h1>
+      <p class="lead">Three of every four Qwen3.5 layers drop softmax attention for Gated DeltaNet, a linear attention whose memory is a fixed-size matrix. Implement it with plain ops, then as a custom Metal kernel, and implement the gated full-attention layers in between.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Explain linear attention and why its state does not grow with context</li>
+<li>Derive the gated delta rule update the code implements</li>
+<li>Implement the short causal convolution and its cache</li>
+<li>Write the recurrence as a Metal kernel and measure the gain</li>
+<li>List every way a Qwen3.5 checkpoint differs from Qwen3 when loading</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="why-a-hybrid" class="scroll-mt-24 text-2xl">Why a hybrid</h2>
+<div class="prose-block">
+<p>Softmax attention's cache grows with every token, and each decode step reads all of it. At long context the cache, not the weights, dominates memory and bandwidth (Lesson 9). <strong>Linear attention</strong> replaces the growing list of keys and values with a fixed-size summary, updated once per token. It is cheaper but loses some ability to recall exact details from far back.</p>
+<p>Qwen3.5 mixes the two: of its 24 layers, 18 are Gated DeltaNet (linear) and 6 are full softmax attention, in a repeating pattern of three linear layers then one full. The full-attention layers keep precise long-range recall; the linear layers make everything else cheap. For the 0.8B model, the KV cache is 12 KB per token instead of the 112 KB of Qwen3-0.6B, plus about 19 MB of fixed state.</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Qwen35Config.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Text settings of a Qwen3.5 checkpoint (`config.json` -&gt; `text_config`).</span>
+<span class="tk-kw">public</span> <span class="tk-kw">struct</span> <span class="tk-type">Qwen35Config</span>: <span class="tk-type">Codable</span>, <span class="tk-type">Sendable</span> {
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> hiddenSize: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> numHiddenLayers: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> intermediateSize: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> numAttentionHeads: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> numKeyValueHeads: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> headDim: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> rmsNormEps: <span class="tk-type">Float</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> vocabSize: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> tieWordEmbeddings: <span class="tk-type">Bool</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> layerTypes: [<span class="tk-type">String</span>]
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> linearNumKeyHeads: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> linearNumValueHeads: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> linearKeyHeadDim: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> linearValueHeadDim: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> linearConvKernelDim: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> mtpNumHiddenLayers: <span class="tk-type">Int</span>?
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> ropeParameters: <span class="tk-type">RopeParameters</span></code></pre></div>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-gated-delta-rule" class="scroll-mt-24 text-2xl">The gated delta rule</h2>
+<div class="prose-block">
+<p>Each linear-attention head keeps a matrix <code>S</code> of shape <code>[Dv, Dk]</code> (128×128 here), an associative memory that maps keys to values. For each token, with key <code>k</code>, value <code>v</code> and query <code>q</code>:</p>
+<div class="code-block"><pre><code>S ← g · S                      decay: forget a little of everything (0 &lt; g &lt; 1)
+S ← S + β · (v − S k) kᵀ        delta rule: move what S returns for k toward v
+y = S q                        read: what does the memory say for this query?</code></pre></div>
+<p>The middle line is the "delta" in DeltaNet. <code>S k</code> is what the memory currently returns for key <code>k</code>; the update writes only the <em>difference</em> between that and the true value, scaled by a write strength <code>β</code>. Plain linear attention would add <code>v kᵀ</code> blindly and pile up interference; the delta rule corrects instead. The decay <code>g</code> lets the model forget stale content. Both are computed per token and per head from the input:</p>
+<div class="code-block"><pre><code>g = exp(−exp(A_log) · softplus(a + dt_bias))     a = in_proj_a(x),  learned A_log, dt_bias
+β = sigmoid(b)                                   b = in_proj_b(x)</code></pre></div>
+<p>The plain-ops implementation is a direct transcription, compiled into one kernel per step:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/GatedDelta.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// One step of the gated delta rule for every head at once.</span>
+<span class="tk-com">///</span>
+<span class="tk-com">///     S = g * S                      decay the memory</span>
+<span class="tk-com">///     S = S + k * beta * (v - S k)   write v at key k, correcting what was there</span>
+<span class="tk-com">///     y = S q                        read the memory with the query</span>
+<span class="tk-com">///</span>
+<span class="tk-com">/// Shapes: q, k `[B, H, Dk]`, v `[B, H, Dv]`, g and beta `[B, H]`,</span>
+<span class="tk-com">/// state `[B, H, Dv, Dk]` in float32.</span>
+<span class="tk-kw">let</span> gatedDeltaStep = compile(shapeless: <span class="tk-kw">true</span>) { (args: [<span class="tk-type">MLXArray</span>]) -&gt; [<span class="tk-type">MLXArray</span>] <span class="tk-kw">in</span>
+    <span class="tk-kw">let</span> (q, k, v, g, beta) = (args[<span class="tk-num">0</span>], args[<span class="tk-num">1</span>], args[<span class="tk-num">2</span>], args[<span class="tk-num">3</span>], args[<span class="tk-num">4</span>])
+    <span class="tk-kw">var</span> state = args[<span class="tk-num">5</span>] * g[.ellipsis, .newAxis, .newAxis]
+    <span class="tk-kw">let</span> kvMemory = (state * k[.ellipsis, .newAxis, <span class="tk-num">0</span>...]).sum(axis: -<span class="tk-num">1</span>)
+    <span class="tk-kw">let</span> delta = (v - kvMemory) * beta[.ellipsis, .newAxis]
+    state = state + k[.ellipsis, .newAxis, <span class="tk-num">0</span>...] * delta[.ellipsis, .newAxis]
+    <span class="tk-kw">let</span> y = (state * q[.ellipsis, .newAxis, <span class="tk-num">0</span>...]).sum(axis: -<span class="tk-num">1</span>)
+    <span class="tk-kw">return</span> [y.asType(q.dtype), state]
+}</code></pre></div><div class="code-block"><div class="code-title"><span>code/Sources/Inference/GatedDelta.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Runs the recurrence over `T` tokens with plain MLX ops, one step at a</span>
+<span class="tk-com">/// time. Returns outputs `[B, T, Hv, Dv]`, the final state, and the state</span>
+<span class="tk-com">/// after every token (used to roll back rejected speculative tokens).</span>
+<span class="tk-kw">func</span> gatedDeltaOps(
+    q: <span class="tk-type">MLXArray</span>, k: <span class="tk-type">MLXArray</span>, v: <span class="tk-type">MLXArray</span>, g: <span class="tk-type">MLXArray</span>, beta: <span class="tk-type">MLXArray</span>, state: <span class="tk-type">MLXArray</span>
+) -&gt; (<span class="tk-type">MLXArray</span>, <span class="tk-type">MLXArray</span>, [<span class="tk-type">MLXArray</span>]) {
+    <span class="tk-kw">let</span> <span class="tk-type">T</span> = q.dim(<span class="tk-num">1</span>)
+    <span class="tk-kw">var</span> state = state
+    <span class="tk-kw">var</span> ys = [<span class="tk-type">MLXArray</span>]()
+    <span class="tk-kw">var</span> states = [<span class="tk-type">MLXArray</span>]()
+    <span class="tk-kw">for</span> t <span class="tk-kw">in</span> <span class="tk-num">0</span> ..&lt; <span class="tk-type">T</span> {
+        <span class="tk-kw">let</span> r = gatedDeltaStep([q[<span class="tk-num">0</span>..., t], k[<span class="tk-num">0</span>..., t], v[<span class="tk-num">0</span>..., t], g[<span class="tk-num">0</span>..., t], beta[<span class="tk-num">0</span>..., t], state])
+        ys.append(r[<span class="tk-num">0</span>])
+        state = r[<span class="tk-num">1</span>]
+        states.append(state)
+    }
+    <span class="tk-kw">return</span> (stacked(ys, axis: <span class="tk-num">1</span>), state, states)
+}</code></pre></div>
+<p>The state is kept in float32. It accumulates thousands of small updates, and bfloat16's three significant digits would erode it.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-full-layer" class="scroll-mt-24 text-2xl">The full layer</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Qwen35.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Gated DeltaNet: linear attention whose state is a fixed-size matrix per</span>
+<span class="tk-com">/// head instead of a growing list of keys and values.</span>
+<span class="tk-kw">final</span> <span class="tk-kw">class</span> <span class="tk-type">GatedDeltaNet</span>: <span class="tk-type">Module</span> {
+    <span class="tk-kw">let</span> numKHeads: <span class="tk-type">Int</span>
+    <span class="tk-kw">let</span> numVHeads: <span class="tk-type">Int</span>
+    <span class="tk-kw">let</span> headKDim: <span class="tk-type">Int</span>
+    <span class="tk-kw">let</span> headVDim: <span class="tk-type">Int</span>
+    <span class="tk-kw">let</span> keyDim: <span class="tk-type">Int</span>
+    <span class="tk-kw">let</span> valueDim: <span class="tk-type">Int</span>
+    <span class="tk-kw">let</span> convDim: <span class="tk-type">Int</span>
+    <span class="tk-kw">let</span> convKernel: <span class="tk-type">Int</span>
+
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;in_proj_qkv&quot;</span>) <span class="tk-kw">var</span> inProjQKV: <span class="tk-type">Linear</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;in_proj_z&quot;</span>) <span class="tk-kw">var</span> inProjZ: <span class="tk-type">Linear</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;in_proj_b&quot;</span>) <span class="tk-kw">var</span> inProjB: <span class="tk-type">Linear</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;in_proj_a&quot;</span>) <span class="tk-kw">var</span> inProjA: <span class="tk-type">Linear</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;conv1d&quot;</span>) <span class="tk-kw">var</span> conv1d: <span class="tk-type">Conv1d</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;norm&quot;</span>) <span class="tk-kw">var</span> norm: <span class="tk-type">GatedRMSNorm</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;out_proj&quot;</span>) <span class="tk-kw">var</span> outProj: <span class="tk-type">Linear</span>
+    <span class="tk-attr">@ParameterInfo</span>(key: <span class="tk-str">&quot;A_log&quot;</span>) <span class="tk-kw">var</span> aLog: <span class="tk-type">MLXArray</span>
+    <span class="tk-attr">@ParameterInfo</span>(key: <span class="tk-str">&quot;dt_bias&quot;</span>) <span class="tk-kw">var</span> dtBias: <span class="tk-type">MLXArray</span>
+
+    <span class="tk-kw">init</span>(_ c: <span class="tk-type">Qwen35Config</span>) {
+        numKHeads = c.linearNumKeyHeads
+        numVHeads = c.linearNumValueHeads
+        headKDim = c.linearKeyHeadDim
+        headVDim = c.linearValueHeadDim
+        keyDim = numKHeads * headKDim
+        valueDim = numVHeads * headVDim
+        convDim = <span class="tk-num">2</span> * keyDim + valueDim
+        convKernel = c.linearConvKernelDim
+
+        _inProjQKV.wrappedValue = <span class="tk-type">Linear</span>(c.hiddenSize, convDim, bias: <span class="tk-kw">false</span>)
+        _inProjZ.wrappedValue = <span class="tk-type">Linear</span>(c.hiddenSize, valueDim, bias: <span class="tk-kw">false</span>)
+        _inProjB.wrappedValue = <span class="tk-type">Linear</span>(c.hiddenSize, numVHeads, bias: <span class="tk-kw">false</span>)
+        _inProjA.wrappedValue = <span class="tk-type">Linear</span>(c.hiddenSize, numVHeads, bias: <span class="tk-kw">false</span>)
+        _conv1d.wrappedValue = <span class="tk-type">Conv1d</span>(
+            inputChannels: convDim, outputChannels: convDim, kernelSize: convKernel,
+            groups: convDim, bias: <span class="tk-kw">false</span>)
+        _norm.wrappedValue = <span class="tk-type">GatedRMSNorm</span>(dimensions: headVDim, eps: c.rmsNormEps)
+        _outProj.wrappedValue = <span class="tk-type">Linear</span>(valueDim, c.hiddenSize, bias: <span class="tk-kw">false</span>)
+        _aLog.wrappedValue = <span class="tk-type">MLXArray</span>.zeros([numVHeads])
+        _dtBias.wrappedValue = <span class="tk-type">MLXArray</span>.ones([numVHeads])
+    }
+
+    <span class="tk-kw">func</span> callAsFunction(_ x: <span class="tk-type">MLXArray</span>, cache: <span class="tk-type">LayerCache</span>?) -&gt; <span class="tk-type">MLXArray</span> {
+        <span class="tk-kw">let</span> (<span class="tk-type">B</span>, <span class="tk-type">S</span>) = (x.dim(<span class="tk-num">0</span>), x.dim(<span class="tk-num">1</span>))
+        <span class="tk-kw">let</span> single = cache <span class="tk-kw">as</span>? <span class="tk-type">LinearCache</span>
+        <span class="tk-kw">let</span> batch = cache <span class="tk-kw">as</span>? <span class="tk-type">BatchLinearCache</span>
+
+        <span class="tk-kw">let</span> qkv = inProjQKV(x)
+        <span class="tk-kw">let</span> z = inProjZ(x).reshaped(<span class="tk-type">B</span>, <span class="tk-type">S</span>, numVHeads, headVDim)
+        <span class="tk-kw">let</span> b = inProjB(x)
+        <span class="tk-kw">let</span> a = inProjA(x)
+
+        <span class="tk-com">// Short causal convolution over the last `convKernel` positions. The</span>
+        <span class="tk-com">// cache supplies the inputs that came before this call.</span>
+        <span class="tk-kw">let</span> convState = batch?.conv ?? single?.conv ?? <span class="tk-type">MLXArray</span>.zeros([<span class="tk-type">B</span>, convKernel - <span class="tk-num">1</span>, convDim], dtype: x.dtype)
+        <span class="tk-kw">let</span> convInput = concatenated([convState, qkv], axis: <span class="tk-num">1</span>)
+        <span class="tk-kw">let</span> convOut = silu(conv1d(convInput))
+
+        <span class="tk-kw">let</span> pieces = split(convOut, indices: [keyDim, <span class="tk-num">2</span> * keyDim], axis: -<span class="tk-num">1</span>)
+        <span class="tk-kw">var</span> q = pieces[<span class="tk-num">0</span>].reshaped(<span class="tk-type">B</span>, <span class="tk-type">S</span>, numKHeads, headKDim)
+        <span class="tk-kw">var</span> k = pieces[<span class="tk-num">1</span>].reshaped(<span class="tk-type">B</span>, <span class="tk-type">S</span>, numKHeads, headKDim)
+        <span class="tk-kw">let</span> v = pieces[<span class="tk-num">2</span>].reshaped(<span class="tk-type">B</span>, <span class="tk-type">S</span>, numVHeads, headVDim)
+
+        <span class="tk-com">// L2-normalize q and k, and fold the 1/sqrt(Dk) readout scale into q.</span>
+        <span class="tk-kw">let</span> invScale = <span class="tk-num">1</span> / <span class="tk-type">Float</span>(headKDim).squareRoot()
+        <span class="tk-kw">let</span> ones = <span class="tk-type">MLXArray</span>.ones([headKDim], dtype: q.dtype)
+        q = (invScale * invScale) * <span class="tk-type">MLXFast</span>.rmsNorm(q, weight: ones, eps: <span class="tk-num">1e-6</span> * invScale * invScale)
+        k = invScale * <span class="tk-type">MLXFast</span>.rmsNorm(k, weight: ones, eps: <span class="tk-num">1e-6</span> * invScale * invScale)
+        <span class="tk-kw">if</span> numVHeads &gt; numKHeads {
+            q = repeated(q, count: numVHeads / numKHeads, axis: <span class="tk-num">2</span>)
+            k = repeated(k, count: numVHeads / numKHeads, axis: <span class="tk-num">2</span>)
+        }
+
+        <span class="tk-com">// Per-token, per-head decay g in (0, 1) and write strength beta in (0, 1).</span>
+        <span class="tk-kw">let</span> g = exp(-exp(aLog.asType(.float32)) * softplus(a + dtBias))
+        <span class="tk-kw">let</span> beta = sigmoid(b)
+
+        <span class="tk-kw">let</span> state = batch?.recurrent ?? single?.recurrent ?? <span class="tk-type">MLXArray</span>.zeros([<span class="tk-type">B</span>, numVHeads, headVDim, headKDim], dtype: .float32)
+        <span class="tk-kw">var</span> y: <span class="tk-type">MLXArray</span>
+        <span class="tk-kw">var</span> newState: <span class="tk-type">MLXArray</span>
+        <span class="tk-kw">var</span> snapshots = [(<span class="tk-type">MLXArray</span>, <span class="tk-type">MLXArray</span>)]()
+        <span class="tk-kw">let</span> record = single?.recordSnapshots ?? <span class="tk-kw">false</span>
+        <span class="tk-kw">if</span> gatedDeltaUseKernel {
+            <span class="tk-kw">let</span> history: <span class="tk-type">MLXArray</span>?
+            (y, newState, history) = gatedDeltaMetal(
+                q: q, k: k, v: v, g: g, beta: beta, state: state, saveHistory: record)
+            <span class="tk-kw">if</span> <span class="tk-kw">let</span> history {
+                <span class="tk-com">// After token t the conv window is convInput[t+1 ..&lt; t+convKernel].</span>
+                snapshots = (<span class="tk-num">0</span> ..&lt; <span class="tk-type">S</span>).map { t <span class="tk-kw">in</span>
+                    (convInput[<span class="tk-num">0</span>..., (t + <span class="tk-num">1</span>) ..&lt; (t + convKernel), <span class="tk-num">0</span>...], history[t])
+                }
+            }
+        } <span class="tk-kw">else</span> {
+            <span class="tk-kw">let</span> states: [<span class="tk-type">MLXArray</span>]
+            (y, newState, states) = gatedDeltaOps(q: q, k: k, v: v, g: g, beta: beta, state: state)
+            <span class="tk-kw">if</span> record {
+                snapshots = states.enumerated().map { t, s <span class="tk-kw">in</span>
+                    (convInput[<span class="tk-num">0</span>..., (t + <span class="tk-num">1</span>) ..&lt; (t + convKernel), <span class="tk-num">0</span>...], s)
+                }
+            }
+        }
+
+        <span class="tk-kw">let</span> newConv = convInput[<span class="tk-num">0</span>..., (-(convKernel - <span class="tk-num">1</span>))..., <span class="tk-num">0</span>...]
+        single?.update(conv: newConv, recurrent: newState, count: <span class="tk-type">S</span>, snapshots: snapshots)
+        batch?.update(conv: newConv, recurrent: newState, count: <span class="tk-type">S</span>)
+
+        y = norm(y, gate: z)
+        <span class="tk-kw">return</span> outProj(y.reshaped(<span class="tk-type">B</span>, <span class="tk-type">S</span>, valueDim))
+    }
+}</code></pre></div>
+<p>Around the recurrence:</p>
+<ul>
+<li><strong>Projections.</strong> <code>in_proj_qkv</code> produces queries, keys and values together; <code>in_proj_z</code> a gate for the output; <code>in_proj_a</code> and <code>in_proj_b</code> the decay and write-strength inputs.</li>
+<li><strong>Short convolution.</strong> Before the recurrence, q, k and v pass through a depthwise causal convolution with 4 taps: each channel becomes a learned mix of its last 4 values. This gives the layer cheap access to the immediately preceding tokens. During decode, the last 3 inputs must be remembered, so they are part of the cache alongside <code>S</code>.</li>
+<li><strong>Normalization.</strong> q and k are L2-normalized per head, and the 1/√Dk readout scale is folded into q. The code uses <code>rmsNorm</code> with a rescaled epsilon, because RMS norm is L2 norm divided by √Dk.</li>
+<li><strong>Heads.</strong> In the tiny MoE test model there are more value heads than key heads, so q and k are repeated to match; the 0.8B model has 16 of each.</li>
+<li><strong>Output.</strong> The result is RMS-normalized and multiplied by <code>silu(z)</code> in float32, then projected back to the hidden size.</li>
+</ul>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-cache-and-why-it-cannot-rewind" class="scroll-mt-24 text-2xl">The cache, and why it cannot rewind</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/LayerCache.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// State of one Gated DeltaNet layer: the last `kernel - 1` inputs of the</span>
+<span class="tk-com">/// causal convolution, plus the `[B, Hv, Dv, Dk]` recurrent matrix.</span>
+<span class="tk-com">///</span>
+<span class="tk-com">/// The recurrent matrix is a running sum, so tokens cannot be subtracted</span>
+<span class="tk-com">/// back out. To support `trim`, the layer can record a snapshot after every</span>
+<span class="tk-com">/// token of a step (`recordSnapshots`), and `trim` restores one of them.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">final</span> <span class="tk-kw">class</span> <span class="tk-type">LinearCache</span>: <span class="tk-type">LayerCache</span> {
+    <span class="tk-kw">public</span> <span class="tk-kw">private</span>(<span class="tk-kw">set</span>) <span class="tk-kw">var</span> offset = <span class="tk-num">0</span>
+    <span class="tk-kw">var</span> conv: <span class="tk-type">MLXArray</span>?
+    <span class="tk-kw">var</span> recurrent: <span class="tk-type">MLXArray</span>?
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> recordSnapshots = <span class="tk-kw">false</span>
+    <span class="tk-kw">var</span> snapshots: [(conv: <span class="tk-type">MLXArray</span>, recurrent: <span class="tk-type">MLXArray</span>)] = []
+
+    <span class="tk-kw">public</span> <span class="tk-kw">init</span>() {}
+
+    <span class="tk-kw">func</span> update(conv: <span class="tk-type">MLXArray</span>, recurrent: <span class="tk-type">MLXArray</span>, count: <span class="tk-type">Int</span>, snapshots: [(<span class="tk-type">MLXArray</span>, <span class="tk-type">MLXArray</span>)]) {
+        <span class="tk-kw">self</span>.conv = conv
+        <span class="tk-kw">self</span>.recurrent = recurrent
+        <span class="tk-kw">self</span>.snapshots = snapshots
+        offset += count
+    }
+
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> state: [<span class="tk-type">MLXArray</span>] { [conv, recurrent].compactMap { $0 } }
+
+    <span class="tk-kw">public</span> <span class="tk-kw">func</span> trim(_ count: <span class="tk-type">Int</span>) {
+        <span class="tk-kw">guard</span> count &gt; <span class="tk-num">0</span> <span class="tk-kw">else</span> { <span class="tk-kw">return</span> }
+        <span class="tk-com">// snapshots[i] is the state after token i of the last step.</span>
+        precondition(count &lt; snapshots.count, <span class="tk-str">&quot;can only trim tokens from the last recorded step&quot;</span>)
+        <span class="tk-kw">let</span> restored = snapshots[snapshots.count - <span class="tk-num">1</span> - count]
+        conv = restored.conv
+        recurrent = restored.recurrent
+        offset -= count
+        snapshots = []
+    }
+}</code></pre></div>
+<p>An attention cache can forget the last <em>n</em> tokens by moving its write position back. <code>S</code> cannot: each token's contribution has been decayed and mixed into every entry, and there is no way to subtract it out. That is why Lesson 14's prompt cache matches whole entries only. Speculative decoding (Lesson 19) needs to undo rejected draft tokens, so the cache can optionally keep a snapshot of the state after each token of a step, and <code>trim</code> restores one of them.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="a-custom-metal-kernel" class="scroll-mt-24 text-2xl">A custom Metal kernel</h2>
+<div class="prose-block">
+<p>The ops version launches a compiled kernel per token per layer, and each launch reads <code>S</code> from memory and writes it back: 1 MB per layer per token for the 0.8B model. During a 512-token prefill that is 512 round trips per layer. The kernel below keeps <code>S</code> in registers for the whole sequence instead:</p>
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/GatedDelta.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// The same recurrence as a Metal kernel. Each SIMD group owns one row of</span>
+<span class="tk-com">/// one head&#x27;s state and keeps it in registers for all `T` tokens, so the</span>
+<span class="tk-com">/// state is read from and written to memory once per call, not once per token.</span>
+<span class="tk-kw">private</span> <span class="tk-kw">let</span> gatedDeltaKernel = <span class="tk-type">MLXFast</span>.metalKernel(
+    name: <span class="tk-str">&quot;gated_delta_step&quot;</span>,
+    inputNames: [<span class="tk-str">&quot;q&quot;</span>, <span class="tk-str">&quot;k&quot;</span>, <span class="tk-str">&quot;v&quot;</span>, <span class="tk-str">&quot;g&quot;</span>, <span class="tk-str">&quot;beta&quot;</span>, <span class="tk-str">&quot;state_in&quot;</span>, <span class="tk-str">&quot;T&quot;</span>],
+    outputNames: [<span class="tk-str">&quot;y&quot;</span>, <span class="tk-str">&quot;state_out&quot;</span>, <span class="tk-str">&quot;history&quot;</span>],
+    source: <span class="tk-str">&quot;&quot;&quot;
+        auto n = thread_position_in_grid.z;
+        auto b_idx = n / Hv;
+        auto h_idx = n % Hv;
+        constexpr int n_per_t = Dk / 32;
+
+        auto q_ = q + b_idx * T * Hv * Dk + h_idx * Dk;
+        auto k_ = k + b_idx * T * Hv * Dk + h_idx * Dk;
+        auto v_ = v + b_idx * T * Hv * Dv + h_idx * Dv;
+        y += b_idx * T * Hv * Dv + h_idx * Dv;
+
+        auto dk_idx = thread_position_in_threadgroup.x;
+        auto dv_idx = thread_position_in_grid.y;
+
+        auto i_state = state_in + (n * Dv + dv_idx) * Dk;
+        auto o_state = state_out + (n * Dv + dv_idx) * Dk;
+
+        float state[n_per_t];
+        for (int i = 0; i &lt; n_per_t; ++i) {
+          state[i] = static_cast&lt;float&gt;(i_state[n_per_t * dk_idx + i]);
+        }
+
+        auto g_ = g + b_idx * T * Hv;
+        auto beta_ = beta + b_idx * T * Hv;
+
+        for (int t = 0; t &lt; T; ++t) {
+          float kv_mem = 0.0f;
+          for (int i = 0; i &lt; n_per_t; ++i) {
+            auto s_idx = n_per_t * dk_idx + i;
+            state[i] = state[i] * g_[h_idx];
+            kv_mem += state[i] * k_[s_idx];
+          }
+          kv_mem = simd_sum(kv_mem);
+
+          auto delta = (v_[dv_idx] - kv_mem) * beta_[h_idx];
+
+          float out = 0.0f;
+          for (int i = 0; i &lt; n_per_t; ++i) {
+            auto s_idx = n_per_t * dk_idx + i;
+            state[i] = state[i] + k_[s_idx] * delta;
+            out += state[i] * q_[s_idx];
+          }
+          out = simd_sum(out);
+          if (thread_index_in_simdgroup == 0) {
+            y[dv_idx] = static_cast&lt;InT&gt;(out);
+          }
+          q_ += Hv * Dk;
+          k_ += Hv * Dk;
+          v_ += Hv * Dv;
+          if (SaveHistory) {
+            // history: [T, B * Hv, Dv, Dk], the state after token t.
+            auto h_state = history + ((t * B * Hv + n) * Dv + dv_idx) * Dk;
+            for (int i = 0; i &lt; n_per_t; ++i) {
+              h_state[n_per_t * dk_idx + i] = static_cast&lt;StT&gt;(state[i]);
+            }
+          }
+          y += Hv * Dv;
+          g_ += Hv;
+          beta_ += Hv;
+        }
+        for (int i = 0; i &lt; n_per_t; ++i) {
+          o_state[n_per_t * dk_idx + i] = static_cast&lt;StT&gt;(state[i]);
+        }
+        &quot;&quot;&quot;</span></code></pre></div><div class="code-block"><div class="code-title"><span>code/Sources/Inference/GatedDelta.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Returns outputs `[B, T, Hv, Dv]`, the final state, and, when</span>
+<span class="tk-com">/// `saveHistory` is set, the state after every token `[T, B, Hv, Dv, Dk]`.</span>
+<span class="tk-kw">func</span> gatedDeltaMetal(
+    q: <span class="tk-type">MLXArray</span>, k: <span class="tk-type">MLXArray</span>, v: <span class="tk-type">MLXArray</span>, g: <span class="tk-type">MLXArray</span>, beta: <span class="tk-type">MLXArray</span>, state: <span class="tk-type">MLXArray</span>,
+    saveHistory: <span class="tk-type">Bool</span> = <span class="tk-kw">false</span>
+) -&gt; (<span class="tk-type">MLXArray</span>, <span class="tk-type">MLXArray</span>, <span class="tk-type">MLXArray</span>?) {
+    <span class="tk-kw">let</span> (<span class="tk-type">B</span>, <span class="tk-type">T</span>, <span class="tk-type">H</span>, <span class="tk-type">Dk</span>) = (q.dim(<span class="tk-num">0</span>), q.dim(<span class="tk-num">1</span>), q.dim(<span class="tk-num">2</span>), q.dim(<span class="tk-num">3</span>))
+    <span class="tk-kw">let</span> <span class="tk-type">Dv</span> = v.dim(<span class="tk-num">3</span>)
+    <span class="tk-kw">let</span> out = gatedDeltaKernel(
+        [q, k, v, g, beta, state, <span class="tk-type">T</span>],
+        template: [(<span class="tk-str">&quot;InT&quot;</span>, q.dtype), (<span class="tk-str">&quot;StT&quot;</span>, state.dtype), (<span class="tk-str">&quot;Dk&quot;</span>, <span class="tk-type">Dk</span>), (<span class="tk-str">&quot;Dv&quot;</span>, <span class="tk-type">Dv</span>), (<span class="tk-str">&quot;Hv&quot;</span>, <span class="tk-type">H</span>),
+                   (<span class="tk-str">&quot;B&quot;</span>, <span class="tk-type">B</span>), (<span class="tk-str">&quot;SaveHistory&quot;</span>, saveHistory)],
+        grid: (<span class="tk-num">32</span>, <span class="tk-type">Dv</span>, <span class="tk-type">B</span> * <span class="tk-type">H</span>),
+        threadGroup: (<span class="tk-num">32</span>, <span class="tk-num">4</span>, <span class="tk-num">1</span>),
+        outputShapes: [[<span class="tk-type">B</span>, <span class="tk-type">T</span>, <span class="tk-type">H</span>, <span class="tk-type">Dv</span>], state.shape, saveHistory ? [<span class="tk-type">T</span>] + state.shape : [<span class="tk-num">1</span>]],
+        outputDTypes: [q.dtype, state.dtype, state.dtype])
+    <span class="tk-kw">return</span> (out[<span class="tk-num">0</span>], out[<span class="tk-num">1</span>], saveHistory ? out[<span class="tk-num">2</span>] : <span class="tk-kw">nil</span>)
+}</code></pre></div>
+<p>How the work is split: the grid launches one SIMD group of 32 threads per row of <code>S</code> per head per batch element. Each thread holds <code>Dk / 32</code> entries of its row in registers. For each token the threads decay their entries, compute their share of <code>S k</code> and combine it with <code>simd_sum</code>, apply the delta update, and compute their share of <code>S q</code> the same way. <code>S</code> is read once at the start and written once at the end. The optional <code>history</code> output writes the state after every token; Lesson 19 uses it for rollback.</p>
+<div class="code-block"><pre><code>prefill, 512 tokens, Qwen3.5-0.8B on M1:   Metal kernel 754 ms    plain ops 2323 ms</code></pre></div>
+<p>The global <code>gatedDeltaUseKernel</code> switch keeps the ops path available as a readable reference to test the kernel against.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="gated-full-attention" class="scroll-mt-24 text-2xl">Gated full attention</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Qwen35.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Full attention with an output gate: `q_proj` produces queries and a</span>
+<span class="tk-com">/// per-channel gate, and the attention output is multiplied by</span>
+<span class="tk-com">/// `sigmoid(gate)` before `o_proj`. RoPE rotates only the first `ropeDims`</span>
+<span class="tk-com">/// dimensions of each head.</span>
+<span class="tk-kw">final</span> <span class="tk-kw">class</span> <span class="tk-type">GatedAttention</span>: <span class="tk-type">Module</span> {
+    <span class="tk-kw">let</span> heads: <span class="tk-type">Int</span>
+    <span class="tk-kw">let</span> kvHeads: <span class="tk-type">Int</span>
+    <span class="tk-kw">let</span> headDim: <span class="tk-type">Int</span>
+    <span class="tk-kw">let</span> ropeDims: <span class="tk-type">Int</span>
+    <span class="tk-kw">let</span> ropeTheta: <span class="tk-type">Float</span>
+    <span class="tk-kw">let</span> scale: <span class="tk-type">Float</span>
+
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;q_proj&quot;</span>) <span class="tk-kw">var</span> qProj: <span class="tk-type">Linear</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;k_proj&quot;</span>) <span class="tk-kw">var</span> kProj: <span class="tk-type">Linear</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;v_proj&quot;</span>) <span class="tk-kw">var</span> vProj: <span class="tk-type">Linear</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;o_proj&quot;</span>) <span class="tk-kw">var</span> oProj: <span class="tk-type">Linear</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;q_norm&quot;</span>) <span class="tk-kw">var</span> qNorm: <span class="tk-type">RMSNorm</span>
+    <span class="tk-attr">@ModuleInfo</span>(key: <span class="tk-str">&quot;k_norm&quot;</span>) <span class="tk-kw">var</span> kNorm: <span class="tk-type">RMSNorm</span>
+
+    <span class="tk-kw">init</span>(_ c: <span class="tk-type">Qwen35Config</span>) {
+        heads = c.numAttentionHeads
+        kvHeads = c.numKeyValueHeads
+        headDim = c.headDim
+        ropeDims = c.ropeDims
+        ropeTheta = c.ropeParameters.ropeTheta
+        scale = <span class="tk-num">1</span> / <span class="tk-type">Float</span>(headDim).squareRoot()
+        _qProj.wrappedValue = <span class="tk-type">Linear</span>(c.hiddenSize, heads * headDim * <span class="tk-num">2</span>, bias: <span class="tk-kw">false</span>)
+        _kProj.wrappedValue = <span class="tk-type">Linear</span>(c.hiddenSize, kvHeads * headDim, bias: <span class="tk-kw">false</span>)
+        _vProj.wrappedValue = <span class="tk-type">Linear</span>(c.hiddenSize, kvHeads * headDim, bias: <span class="tk-kw">false</span>)
+        _oProj.wrappedValue = <span class="tk-type">Linear</span>(heads * headDim, c.hiddenSize, bias: <span class="tk-kw">false</span>)
+        _qNorm.wrappedValue = <span class="tk-type">RMSNorm</span>(dimensions: headDim, eps: c.rmsNormEps)
+        _kNorm.wrappedValue = <span class="tk-type">RMSNorm</span>(dimensions: headDim, eps: c.rmsNormEps)
+    }
+
+    <span class="tk-kw">func</span> callAsFunction(_ x: <span class="tk-type">MLXArray</span>, cache: <span class="tk-type">LayerCache</span>?) -&gt; <span class="tk-type">MLXArray</span> {
+        <span class="tk-kw">let</span> (<span class="tk-type">B</span>, <span class="tk-type">L</span>) = (x.dim(<span class="tk-num">0</span>), x.dim(<span class="tk-num">1</span>))
+
+        <span class="tk-kw">let</span> qg = qProj(x).reshaped(<span class="tk-type">B</span>, <span class="tk-type">L</span>, heads, <span class="tk-num">2</span> * headDim)
+        <span class="tk-kw">let</span> parts = split(qg, parts: <span class="tk-num">2</span>, axis: -<span class="tk-num">1</span>)
+        <span class="tk-kw">let</span> gate = parts[<span class="tk-num">1</span>].reshaped(<span class="tk-type">B</span>, <span class="tk-type">L</span>, heads * headDim)
+
+        <span class="tk-kw">let</span> q = qNorm(parts[<span class="tk-num">0</span>]).transposed(<span class="tk-num">0</span>, <span class="tk-num">2</span>, <span class="tk-num">1</span>, <span class="tk-num">3</span>)
+        <span class="tk-kw">let</span> k = kNorm(kProj(x).reshaped(<span class="tk-type">B</span>, <span class="tk-type">L</span>, kvHeads, headDim)).transposed(<span class="tk-num">0</span>, <span class="tk-num">2</span>, <span class="tk-num">1</span>, <span class="tk-num">3</span>)
+        <span class="tk-kw">let</span> v = vProj(x).reshaped(<span class="tk-type">B</span>, <span class="tk-type">L</span>, kvHeads, headDim).transposed(<span class="tk-num">0</span>, <span class="tk-num">2</span>, <span class="tk-num">1</span>, <span class="tk-num">3</span>)
+
+        <span class="tk-kw">let</span> out = attend(q: q, k: k, v: v, cache: cache, scale: scale) { [ropeDims, ropeTheta] x, offset <span class="tk-kw">in</span>
+            <span class="tk-type">MLXFast</span>.<span class="tk-type">RoPE</span>(x, dimensions: ropeDims, traditional: <span class="tk-kw">false</span>, base: ropeTheta, scale: <span class="tk-num">1</span>, offset: offset)
+        }
+        .transposed(<span class="tk-num">0</span>, <span class="tk-num">2</span>, <span class="tk-num">1</span>, <span class="tk-num">3</span>).reshaped(<span class="tk-type">B</span>, <span class="tk-type">L</span>, heads * headDim)
+        <span class="tk-kw">return</span> oProj(out * sigmoid(gate))
+    }
+}</code></pre></div>
+<p>Two differences from Qwen3's attention. <code>q_proj</code> is twice as wide and produces both the queries and a per-channel <strong>output gate</strong>; the attention output is multiplied by <code>sigmoid(gate)</code> before <code>o_proj</code>, letting the model switch a head's contribution off. And RoPE rotates only the first quarter of each 256-dimensional head (<code>partial_rotary_factor</code> 0.25, so 64 dimensions); the rest carry content without position. Qwen3.5's config describes a multimodal rotary scheme (mRoPE) for images and video; for text all its position streams are equal, and it reduces to ordinary RoPE on those 64 dimensions.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="loading-qwen3-5" class="scroll-mt-24 text-2xl">Loading Qwen3.5</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Qwen35Loader.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Loads the text model (and MTP head) from an original Hugging Face</span>
+<span class="tk-com">/// Qwen3.5 checkpoint, optionally quantizing it on the fly.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">func</span> loadQwen35(
+    from directory: <span class="tk-type">URL</span>, withMTP: <span class="tk-type">Bool</span> = <span class="tk-kw">true</span>, quantizeBits: <span class="tk-type">Int</span>? = <span class="tk-num">4</span>, groupSize: <span class="tk-type">Int</span> = <span class="tk-num">64</span>
+) <span class="tk-kw">throws</span> -&gt; <span class="tk-type">Qwen35Model</span> {
+    <span class="tk-kw">let</span> config = <span class="tk-kw">try</span> <span class="tk-type">Qwen35Config</span>.load(from: directory)
+    <span class="tk-kw">let</span> model = <span class="tk-type">Qwen35Model</span>(config, withMTP: withMTP)
+
+    <span class="tk-kw">let</span> files = <span class="tk-kw">try</span> <span class="tk-type">FileManager</span>.<span class="tk-kw">default</span>.contentsOfDirectory(at: directory, includingPropertiesForKeys: <span class="tk-kw">nil</span>)
+        .filter { $0.pathExtension == <span class="tk-str">&quot;safetensors&quot;</span> }
+    <span class="tk-kw">guard</span> !files.isEmpty <span class="tk-kw">else</span> { <span class="tk-kw">throw</span> <span class="tk-type">LoadError</span>.noWeights(directory) }
+
+    <span class="tk-kw">var</span> weights = [<span class="tk-type">String</span>: <span class="tk-type">MLXArray</span>]()
+    <span class="tk-kw">for</span> file <span class="tk-kw">in</span> files {
+        <span class="tk-kw">for</span> (name, array) <span class="tk-kw">in</span> <span class="tk-kw">try</span> loadArrays(url: file) {
+            <span class="tk-kw">if</span> <span class="tk-kw">let</span> renamed = sanitize(name, withMTP: withMTP) {
+                weights[renamed] = array
+            }
+        }
+    }
+
+    <span class="tk-kw">if</span> config.tieWordEmbeddings { weights[<span class="tk-str">&quot;lm_head.weight&quot;</span>] = <span class="tk-kw">nil</span> }
+    stackExperts(&amp;weights)
+
+    <span class="tk-kw">for</span> (name, array) <span class="tk-kw">in</span> weights {
+        <span class="tk-com">// PyTorch stores depthwise conv weights as [out, 1, kernel];</span>
+        <span class="tk-com">// MLX wants [out, kernel, 1].</span>
+        <span class="tk-kw">if</span> name.hasSuffix(<span class="tk-str">&quot;conv1d.weight&quot;</span>) &amp;&amp; array.dim(-<span class="tk-num">1</span>) != <span class="tk-num">1</span> {
+            weights[name] = array.swappedAxes(<span class="tk-num">1</span>, <span class="tk-num">2</span>)
+        }
+        <span class="tk-com">// Qwen3.5 RMSNorms scale by (1 + w) and store only w. MLX&#x27;s RMSNorm</span>
+        <span class="tk-com">// scales by w, so add the 1 back once at load time.</span>
+        <span class="tk-kw">if</span> isShiftedNorm(name) {
+            weights[name] = array + <span class="tk-num">1</span>
+        }
+    }
+
+    <span class="tk-kw">try</span> model.update(parameters: <span class="tk-type">ModuleParameters</span>.unflattened(weights), verify: [.all])
+
+    <span class="tk-kw">if</span> <span class="tk-kw">let</span> bits = quantizeBits {
+        quantize(model: model) { path, module <span class="tk-kw">in</span>
+            <span class="tk-com">// Quantize every matrix whose input width splits into whole</span>
+            <span class="tk-com">// groups. Anything else (norms, conv, A_log, tiny test models)</span>
+            <span class="tk-com">// stays in bf16.</span>
+            <span class="tk-kw">let</span> inputs: <span class="tk-type">Int</span>
+            <span class="tk-kw">switch</span> module {
+            <span class="tk-kw">case</span> <span class="tk-kw">let</span> m <span class="tk-kw">as</span> <span class="tk-type">Linear</span>: inputs = m.weight.dim(-<span class="tk-num">1</span>)
+            <span class="tk-kw">case</span> <span class="tk-kw">let</span> m <span class="tk-kw">as</span> <span class="tk-type">SwitchLinear</span>: inputs = m.weight.dim(-<span class="tk-num">1</span>)
+            <span class="tk-kw">case</span> <span class="tk-kw">let</span> m <span class="tk-kw">as</span> <span class="tk-type">Embedding</span>: inputs = m.weight.dim(-<span class="tk-num">1</span>)
+            <span class="tk-kw">default</span>: <span class="tk-kw">return</span> <span class="tk-kw">nil</span>
+            }
+            <span class="tk-kw">return</span> inputs % groupSize == <span class="tk-num">0</span> ? (groupSize, bits, .affine) : <span class="tk-kw">nil</span>
+        }
+    }
+    eval(model)
+    <span class="tk-kw">return</span> model
+}</code></pre></div><div class="code-block"><div class="code-title"><span>code/Sources/Inference/Qwen35Loader.swift</span><span>swift</span></div><pre><code><span class="tk-kw">private</span> <span class="tk-kw">func</span> isShiftedNorm(_ name: <span class="tk-type">String</span>) -&gt; <span class="tk-type">Bool</span> {
+    <span class="tk-kw">guard</span> !name.contains(<span class="tk-str">&quot;linear_attn.norm&quot;</span>) <span class="tk-kw">else</span> { <span class="tk-kw">return</span> <span class="tk-kw">false</span> }
+    <span class="tk-kw">return</span> [<span class="tk-str">&quot;input_layernorm.weight&quot;</span>, <span class="tk-str">&quot;post_attention_layernorm.weight&quot;</span>, <span class="tk-str">&quot;q_norm.weight&quot;</span>,
+            <span class="tk-str">&quot;k_norm.weight&quot;</span>, <span class="tk-str">&quot;model.norm.weight&quot;</span>, <span class="tk-str">&quot;mtp.norm.weight&quot;</span>,
+            <span class="tk-str">&quot;pre_fc_norm_embedding.weight&quot;</span>, <span class="tk-str">&quot;pre_fc_norm_hidden.weight&quot;</span>]
+        .contains { name.hasSuffix($0) }
+}</code></pre></div>
+<p>Every difference from Qwen3 is a trap that produces a working but wrong model:</p>
+<ul>
+<li><strong>Names.</strong> The checkpoint is a vision-language model: text weights sit under <code>model.language_model.</code> and the vision tower under <code>model.visual.</code>, which is skipped.</li>
+<li><strong>Conv weights</strong> are stored PyTorch-style as <code>[out, 1, kernel]</code>; MLX wants <code>[out, kernel, 1]</code>.</li>
+<li><strong>Norms.</strong> Qwen3.5's RMSNorms multiply by <code>(1 + w)</code> and store only <code>w</code>, which is near zero. MLX's RMSNorm multiplies by <code>w</code>. Adding 1 at load time fixes it, for every norm except the gated norm inside linear attention, which uses <code>w</code> directly. Forget this and the model loads, runs, and is quietly broken.</li>
+<li><strong>The MTP head.</strong> The weights under <code>mtp.</code> are kept. The popular pre-quantized community conversions of Qwen3.5 drop them (their index has zero <code>mtp</code> keys), so this loader starts from the original bfloat16 checkpoint and quantizes every matrix whose width divides into groups of 64 itself. Loading 0.8B this way peaks at about 2 GB of memory before settling at about 0.5 GB.</li>
+</ul>
+<p>Parity against <code>mlx-lm</code> for the bfloat16 model: the same top token at every position, with differences up to 0.58 at logits around 23, both for full prefill and for token-by-token decoding through the caches.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">Gated DeltaNet keeps a per-head matrix S that it decays, corrects toward each new key-value pair, and reads with each query, so per-token cost and memory are constant in context length. Each layer also has a 4-tap causal convolution whose last 3 inputs are cached. A Metal kernel that keeps S in registers across tokens prefills about 3× faster than the op-by-op version. The full-attention layers add an output gate and rotate only a quarter of each head. Loading requires transposing conv weights, adding 1 to most norm weights, and keeping the MTP head.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="numeric" data-answer="19" data-tolerance="0.6" data-placeholder="MB">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Qwen3.5-0.8B's linear-attention state: 18 layers × 16 heads × 128 × 128 entries in float32. About how many megabytes (10<sup>6</sup> bytes)? Round to the nearest MB.</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>18 × 16 × 16,384 × 4 bytes = 18.9 MB, the same at 10 tokens or 100,000.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>In <code>S ← S + β(v − Sk)kᵀ</code>, what does <code>Sk</code> represent?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">The attention score</button>
+<button type="button" data-opt="1">What the memory currently returns for key k</button>
+<button type="button" data-opt="2">The decay factor</button>
+<button type="button" data-opt="3">The query projection</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>The delta rule writes only the difference between the stored and the true value for this key.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why can't a linear-attention cache simply trim its last 2 tokens?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It has no notion of position</button>
+<button type="button" data-opt="1">Each token's update has been decayed and mixed into the whole state and cannot be subtracted back out</button>
+<button type="button" data-opt="2">Trimming is too slow</button>
+<button type="button" data-opt="3">The convolution forbids it</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>The state is a running summary, not a list. Undoing requires a saved earlier state.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why is the Metal kernel about 3× faster for prefill than the ops version?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It uses lower precision</button>
+<button type="button" data-opt="1">It keeps the state in registers for the whole sequence instead of reading and writing it from memory for every token</button>
+<button type="button" data-opt="2">It skips the decay</button>
+<button type="button" data-opt="3">It runs on the Neural Engine</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>The recurrence is memory-bound when the state round-trips through memory each token.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A Qwen3.5 port produces fluent but noticeably worse text. Which loading mistake is the most likely culprit?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Skipping the vision tower</button>
+<button type="button" data-opt="1">Forgetting to add 1 to the (1 + w) RMSNorm weights</button>
+<button type="button" data-opt="2">Quantizing to 4 bits</button>
+<button type="button" data-opt="3">Keeping the MTP weights</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Without the +1, every norm scales by a value near zero instead of near one. The model still produces text, which is what makes this mistake dangerous.</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="16-mixture-of-experts.html" data-nav-prev>← 16. Mixture of experts</a>
+      <a class="btn btn-primary" href="18-speculative-decoding.html" data-nav-next>18. Speculative decoding →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+
+</body>
+</html>

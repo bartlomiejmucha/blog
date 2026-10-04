@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>9. The generation loop and the KV cache — Qwen inference in Swift</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a0a0a'/><circle cx='16' cy='16' r='6' fill='%23f5f5f4'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script>
+/* Applied before first paint so switching themes never flashes the old one. */
+(function () {
+  try {
+    var t = localStorage.getItem("llm-course-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<script src="../assets/js/course.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</head>
+<body data-lesson="l09" class="min-h-screen">
+<header class="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
+  <div class="wrap-wide flex items-center gap-4 py-3">
+    <a href="../../../index.html" class="btn btn-ghost btn-sm">← All courses</a>
+    <a href="../index.html" class="btn btn-ghost btn-sm">← Course</a>
+    <div class="hidden flex-1 sm:block">
+      <div class="bar-track"><div class="bar-fill" data-course-bar style="width:0%"></div></div>
+    </div>
+    <span class="hidden font-mono text-xs text-ink-400 md:inline" data-course-stat></span>
+    <button class="btn btn-sm btn-ghost" data-theme-toggle type="button" title="Theme"></button>
+    <span class="pill font-mono">Lesson 9 / 21</span>
+  </div>
+</header>
+
+<div class="wrap-wide grid gap-8 py-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
+  <main class="min-w-0 space-y-10">
+    <div class="space-y-4">
+      <span class="pill">Part II · Running Qwen</span>
+      <h1 class="text-4xl leading-tight">9. The generation loop and the KV cache</h1>
+      <p class="lead">Turn a model into a token stream: prefill the prompt in chunks, keep every past key and value in a cache that grows in steps, and overlap CPU and GPU work so the GPU never waits.</p>
+      <div class="card">
+        <p class="mb-2 text-sm font-semibold text-ink-100">By the end of this lesson you can</p>
+        <ul class="prose-block list-disc space-y-1 pl-6 text-sm"><li>Explain why caching keys and values turns decode from quadratic into linear work</li>
+<li>Compute KV cache memory for a model and context length</li>
+<li>Implement a cache that appends without copying the whole history every token</li>
+<li>Write a generation loop with chunked prefill and pipelined decode</li></ul>
+      </div>
+    </div>
+
+<section class="space-y-4">
+<h2 id="prefill-and-decode" class="scroll-mt-24 text-2xl">Prefill and decode</h2>
+<div class="prose-block">
+<p>Lesson 1 named the two phases. Now look at what the model computes in each. Attention at position <em>t</em> needs the keys and values of every position up to <em>t</em>. Those depend only on earlier tokens, which never change. So instead of recomputing them for every new token, store them:</p>
+<ul>
+<li><strong>Prefill</strong> runs the model on the whole prompt at once. Each attention layer computes keys and values for all prompt positions and stores them in its cache. The logits at the last position give the first generated token.</li>
+<li><strong>Decode</strong> runs the model on one token. Each layer computes that token's key and value, appends them to the cache, and attends to the whole cache.</li>
+</ul>
+<p>Without the cache, generating <em>n</em> tokens would cost work proportional to 1 + 2 + … + <em>n</em>, which grows as <em>n</em>². With it, each step does one token's worth of projections plus an attention read over the cache.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="how-big-the-cache-gets" class="scroll-mt-24 text-2xl">How big the cache gets</h2>
+<div class="prose-block">
+<p>Per token, each attention layer stores one key and one value vector per KV head:</p>
+<p class="rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 font-mono text-sm text-ink-100">bytes per token = layers × 2 × kv_heads × head_dim × bytes per value</p>
+<p>For Qwen3-0.6B in bfloat16: 28 × 2 × 8 × 128 × 2 = 114,688 bytes, about 112 KB per token. A 32,000-token context then needs 3.5 GB, roughly ten times the 4-bit weights. On long contexts the cache, not the model, decides how many requests fit in memory, and reading it is part of every decode step's memory traffic.</p>
+<p>Qwen3.5 changes this picture dramatically. Only 6 of its 24 layers keep a KV cache, with 2 KV heads each; the other 18 keep a fixed-size state instead (Lesson 17). Try both models below.</p>
+</div>
+<div class="figure" id="viz-kvcache"><p class="figure-title">Cache memory versus context length</p><p class="figure-sub">Drag the context length. Qwen3.5 keeps a KV cache in only a quarter of its layers, plus a fixed recurrent state.</p></div>
+</section>
+
+<section class="space-y-4">
+<h2 id="a-cache-that-grows-in-steps" class="scroll-mt-24 text-2xl">A cache that grows in steps</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/KVCache.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Keys and values for one attention layer, stored in a buffer that grows in</span>
+<span class="tk-com">/// fixed steps so that decoding one token does not copy the whole history.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">final</span> <span class="tk-kw">class</span> <span class="tk-type">KVCache</span> {
+    <span class="tk-kw">public</span> <span class="tk-kw">internal</span>(<span class="tk-kw">set</span>) <span class="tk-kw">var</span> offset = <span class="tk-num">0</span>
+    <span class="tk-kw">var</span> keys: <span class="tk-type">MLXArray</span>?
+    <span class="tk-kw">var</span> values: <span class="tk-type">MLXArray</span>?
+    <span class="tk-kw">let</span> step = <span class="tk-num">256</span>
+
+    <span class="tk-kw">public</span> <span class="tk-kw">init</span>() {}
+
+    <span class="tk-com">/// Appends `[B, kvHeads, L, headDim]` keys and values and returns</span>
+    <span class="tk-com">/// everything cached so far, including the new entries.</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">func</span> update(keys newKeys: <span class="tk-type">MLXArray</span>, values newValues: <span class="tk-type">MLXArray</span>) -&gt; (<span class="tk-type">MLXArray</span>, <span class="tk-type">MLXArray</span>) {
+        <span class="tk-kw">let</span> previous = offset
+        <span class="tk-kw">let</span> count = newKeys.dim(<span class="tk-num">2</span>)
+
+        <span class="tk-kw">if</span> keys == <span class="tk-kw">nil</span> || previous + count &gt; keys!.dim(<span class="tk-num">2</span>) {
+            <span class="tk-kw">let</span> (<span class="tk-type">B</span>, <span class="tk-type">H</span>, _, <span class="tk-type">D</span>) = (newKeys.dim(<span class="tk-num">0</span>), newKeys.dim(<span class="tk-num">1</span>), newKeys.dim(<span class="tk-num">2</span>), newKeys.dim(<span class="tk-num">3</span>))
+            <span class="tk-kw">let</span> capacity = ((count + step - <span class="tk-num">1</span>) / step) * step
+            <span class="tk-kw">let</span> k = <span class="tk-type">MLXArray</span>.zeros([<span class="tk-type">B</span>, <span class="tk-type">H</span>, capacity, <span class="tk-type">D</span>], dtype: newKeys.dtype)
+            <span class="tk-kw">let</span> v = <span class="tk-type">MLXArray</span>.zeros([<span class="tk-type">B</span>, <span class="tk-type">H</span>, capacity, newValues.dim(<span class="tk-num">3</span>)], dtype: newValues.dtype)
+            <span class="tk-kw">if</span> <span class="tk-kw">let</span> keys, <span class="tk-kw">let</span> values {
+                <span class="tk-kw">self</span>.keys = concatenated([keys[.ellipsis, ..&lt;previous, <span class="tk-num">0</span>...], k], axis: <span class="tk-num">2</span>)
+                <span class="tk-kw">self</span>.values = concatenated([values[.ellipsis, ..&lt;previous, <span class="tk-num">0</span>...], v], axis: <span class="tk-num">2</span>)
+            } <span class="tk-kw">else</span> {
+                <span class="tk-kw">self</span>.keys = k
+                <span class="tk-kw">self</span>.values = v
+            }
+        }
+
+        offset += count
+        keys![.ellipsis, previous ..&lt; offset, <span class="tk-num">0</span>...] = newKeys
+        values![.ellipsis, previous ..&lt; offset, <span class="tk-num">0</span>...] = newValues
+        <span class="tk-kw">return</span> (keys![.ellipsis, ..&lt;offset, <span class="tk-num">0</span>...], values![.ellipsis, ..&lt;offset, <span class="tk-num">0</span>...])
+    }
+
+    <span class="tk-com">/// Drops the newest `count` entries. Speculative decoding uses this to</span>
+    <span class="tk-com">/// discard rejected draft tokens.</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">func</span> trim(_ count: <span class="tk-type">Int</span>) {
+        offset -= min(count, offset)
+    }
+
+    <span class="tk-com">/// The arrays that hold the cache, for `eval` and memory accounting.</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">var</span> state: [<span class="tk-type">MLXArray</span>] { [keys, values].compactMap { $0 } }
+}</code></pre></div>
+<p>The naive cache concatenates new keys onto old ones every step. That copies the whole history every token, which is quadratic again, just with a smaller constant. This cache allocates room for 256 positions at a time and writes each new token into the next free slot. Only when the buffer is full does it allocate the next block and copy. <code>update</code> returns a view of the filled part, which is what attention reads.</p>
+<p><code>trim</code> moves the write position back without touching memory. Speculative decoding (Lesson 19) uses it to forget draft tokens the model rejected, and it is why a cache that "forgets" can be nearly free.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="the-generator" class="scroll-mt-24 text-2xl">The generator</h2>
+<div class="prose-block">
+<div class="code-block"><div class="code-title"><span>code/Sources/Inference/Generator.swift</span><span>swift</span></div><pre><code><span class="tk-com">/// Produces tokens one at a time for a single sequence.</span>
+<span class="tk-com">///</span>
+<span class="tk-com">/// The prompt is processed in chunks (prefill), then the loop feeds each</span>
+<span class="tk-com">/// sampled token back in (decode). The next step is queued on the GPU before</span>
+<span class="tk-com">/// the current token is handed to the caller, so the CPU work between steps</span>
+<span class="tk-com">/// overlaps with GPU work.</span>
+<span class="tk-kw">public</span> <span class="tk-kw">struct</span> <span class="tk-type">TokenGenerator</span>: <span class="tk-type">Sequence</span>, <span class="tk-type">IteratorProtocol</span> {
+    <span class="tk-kw">let</span> model: <span class="tk-kw">any</span> <span class="tk-type">LanguageModel</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">let</span> caches: [<span class="tk-type">LayerCache</span>]
+    <span class="tk-kw">var</span> sampler: <span class="tk-type">Sampler</span>
+    <span class="tk-kw">var</span> pending: <span class="tk-type">MLXArray</span>
+    <span class="tk-kw">let</span> maxTokens: <span class="tk-type">Int</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">private</span>(<span class="tk-kw">set</span>) <span class="tk-kw">var</span> generated = <span class="tk-num">0</span>
+    <span class="tk-com">/// Every token that has been run through the model, in order. The</span>
+    <span class="tk-com">/// caches hold exactly these positions.</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">private</span>(<span class="tk-kw">set</span>) <span class="tk-kw">var</span> fed: [<span class="tk-type">Int</span>] = []
+    <span class="tk-com">/// Copies of the caches taken when prefill reached `checkpoint`.</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">private</span>(<span class="tk-kw">set</span>) <span class="tk-kw">var</span> checkpointCaches: [<span class="tk-type">LayerCache</span>]?
+
+    <span class="tk-kw">public</span> <span class="tk-kw">init</span>(
+        model: <span class="tk-kw">any</span> <span class="tk-type">LanguageModel</span>, prompt: [<span class="tk-type">Int</span>], parameters: <span class="tk-type">SamplingParameters</span>,
+        maxTokens: <span class="tk-type">Int</span>, caches: [<span class="tk-type">LayerCache</span>]? = <span class="tk-kw">nil</span>, prefillStep: <span class="tk-type">Int</span> = <span class="tk-num">512</span>,
+        checkpoint: <span class="tk-type">Int</span>? = <span class="tk-kw">nil</span>
+    ) {
+        <span class="tk-kw">self</span>.model = model
+        <span class="tk-kw">self</span>.caches = caches ?? model.makeCaches()
+        <span class="tk-kw">self</span>.sampler = <span class="tk-type">Sampler</span>(parameters)
+        <span class="tk-kw">self</span>.maxTokens = maxTokens
+
+        <span class="tk-com">// Prefill all but the last prompt token in chunks. Only the cache</span>
+        <span class="tk-com">// matters here, the logits are thrown away.</span>
+        <span class="tk-kw">var</span> rest = prompt[...]
+        fed = prompt
+        <span class="tk-kw">while</span> rest.count &gt; <span class="tk-num">1</span> {
+            <span class="tk-kw">var</span> size = <span class="tk-type">Swift</span>.min(prefillStep, rest.count - <span class="tk-num">1</span>)
+            <span class="tk-com">// End a chunk exactly at the checkpoint so the caches can be copied there.</span>
+            <span class="tk-kw">if</span> <span class="tk-kw">let</span> checkpoint, rest.startIndex &lt; checkpoint {
+                size = <span class="tk-type">Swift</span>.min(size, checkpoint - rest.startIndex)
+            }
+            <span class="tk-kw">let</span> chunk = rest.prefix(size)
+            _ = model(<span class="tk-type">MLXArray</span>(chunk.map(<span class="tk-type">Int32</span>.<span class="tk-kw">init</span>)).reshaped(<span class="tk-num">1</span>, -<span class="tk-num">1</span>), caches: <span class="tk-kw">self</span>.caches)
+            eval(<span class="tk-kw">self</span>.caches.flatMap(\.state))
+            rest = rest.dropFirst(chunk.count)
+            <span class="tk-kw">if</span> rest.startIndex == checkpoint {
+                checkpointCaches = <span class="tk-kw">self</span>.caches.map { $0.copy() }
+            }
+        }
+        pending = <span class="tk-type">MLXArray</span>(rest.map(<span class="tk-type">Int32</span>.<span class="tk-kw">init</span>)).reshaped(<span class="tk-num">1</span>, -<span class="tk-num">1</span>)
+        pending = step(pending)
+        asyncEval(pending)
+    }
+
+    <span class="tk-kw">mutating</span> <span class="tk-kw">func</span> step(_ input: <span class="tk-type">MLXArray</span>) -&gt; <span class="tk-type">MLXArray</span> {
+        <span class="tk-kw">let</span> logits = model(input, caches: caches)
+        <span class="tk-kw">return</span> sampler(logits[<span class="tk-num">0</span>..., -<span class="tk-num">1</span>, <span class="tk-num">0</span>...])
+    }
+
+    <span class="tk-kw">public</span> <span class="tk-kw">mutating</span> <span class="tk-kw">func</span> next() -&gt; <span class="tk-type">Int</span>? {
+        <span class="tk-kw">guard</span> generated &lt; maxTokens <span class="tk-kw">else</span> { <span class="tk-kw">return</span> <span class="tk-kw">nil</span> }
+        <span class="tk-kw">let</span> current = pending
+        <span class="tk-kw">if</span> generated + <span class="tk-num">1</span> &lt; maxTokens {
+            <span class="tk-com">// Queue step n+1 before reading token n off the GPU.</span>
+            pending = step(current.reshaped(<span class="tk-num">1</span>, <span class="tk-num">1</span>))
+            asyncEval(pending)
+        }
+        generated += <span class="tk-num">1</span>
+        <span class="tk-kw">let</span> token = current.item(<span class="tk-type">Int</span>.<span class="tk-kw">self</span>)
+        <span class="tk-kw">if</span> generated &lt; maxTokens { fed.append(token) }
+        <span class="tk-kw">return</span> token
+    }
+}</code></pre></div>
+<p>Read it in three parts.</p>
+<p><strong>Chunked prefill.</strong> The prompt, except its last token, is run in chunks of 512. Chunking bounds the memory of one forward pass, since attention scores for a chunk scale with chunk × cache length. Each chunk's caches are evaluated immediately so the lazy graph does not grow across chunks. The last prompt token goes through the regular step, because it is the one whose logits matter.</p>
+<p><strong>Pipelined decode.</strong> In <code>next()</code>, the generator builds and <code>asyncEval</code>s the forward pass for the <em>next</em> token before calling <code>item()</code> on the current one. While the caller detokenizes and streams the current token, the GPU is already computing the next. On the M1 this takes decode from 12.15 to 10.9 ms per token, an 11% gain for four lines of code.</p>
+<p><strong>Bookkeeping.</strong> <code>fed</code> records every token that has gone into the model, so it always says exactly which positions the caches hold, including the look-ahead token. <code>checkpoint</code> copies the caches at a chosen prompt position. Both exist for the prompt cache in Lesson 14; ignore them for now.</p>
+</div>
+</section>
+
+<section class="space-y-4">
+<h2 id="running-it" class="scroll-mt-24 text-2xl">Running it</h2>
+<div class="prose-block">
+<p>With the sampler from the next lesson, this is the core of the <code>infer</code> tool: format a prompt, iterate the generator, stop at an end token, and stream text through the detokenizer.</p>
+<div class="code-block"><pre><code><span class="tk-kw">let</span> model = <span class="tk-kw">try</span> loadQwen3(from: directory)
+<span class="tk-kw">let</span> tokenizer = <span class="tk-kw">try</span> <span class="tk-kw">await</span> <span class="tk-type">AutoTokenizer</span>.from(modelFolder: directory)
+<span class="tk-kw">let</span> prompt = <span class="tk-kw">try</span> tokenizer.applyChatTemplate(
+    messages: [[<span class="tk-str">&quot;role&quot;</span>: <span class="tk-str">&quot;user&quot;</span>, <span class="tk-str">&quot;content&quot;</span>: <span class="tk-str">&quot;Why is the sky blue?&quot;</span>]], tools: <span class="tk-kw">nil</span>,
+    additionalContext: [<span class="tk-str">&quot;enable_thinking&quot;</span>: <span class="tk-kw">false</span>])
+
+<span class="tk-kw">var</span> detokenizer = <span class="tk-type">StreamingDetokenizer</span>(tokenizer: tokenizer)
+<span class="tk-kw">for</span> token <span class="tk-kw">in</span> <span class="tk-type">TokenGenerator</span>(model: model, prompt: prompt, parameters: .<span class="tk-kw">init</span>(), maxTokens: <span class="tk-num">200</span>) {
+    <span class="tk-kw">if</span> token == <span class="tk-num">151645</span> { <span class="tk-kw">break</span> }               <span class="tk-com">// &lt;|im_end|&gt;</span>
+    print(detokenizer.append(token), terminator: <span class="tk-str">&quot;&quot;</span>)
+}</code></pre></div>
+<p>On a base M1 with Qwen3-0.6B at 4 bits this streams at about 60 tokens per second in a Debug build. Remember Lesson 3: measure in Release.</p>
+</div>
+</section>
+
+    <div class="note note-key"><p class="font-semibold text-ink-100 mb-2">Lesson in one breath</p><p class="text-sm">Without a cache, every new token would recompute keys and values for the entire history. The KV cache stores them once per token per layer, at a cost of 2 × kv_heads × head_dim × bytes per layer per token. The generator prefills the prompt in chunks, then repeatedly runs one token, samples, and feeds the sample back, queueing step n+1 on the GPU before handing token n to the caller.</p></div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between gap-4">
+        <h2 id="exercises" class="scroll-mt-24 text-2xl">Practice</h2>
+        <div class="flex items-center gap-3">
+          <div class="bar-track w-28"><div class="bar-fill" data-lesson-ex-bar style="width:0%"></div></div>
+          <span class="font-mono text-xs text-ink-400" data-lesson-ex-count></span>
+        </div>
+      </div>
+      <p class="text-sm text-ink-400">Answers are checked in your browser and saved to this device. Get one wrong and you can retry as many times as you like.</p>
+<div class="card-tight space-y-3" data-ex data-ex-id="1" data-ex-type="numeric" data-answer="128" data-tolerance="0.5" data-placeholder="KB">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 1</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>A model has 32 layers, 8 KV heads, head dim 128, and caches in bfloat16. How many kilobytes per token does its KV cache use? (1 KB = 1024 bytes.)</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>32 × 2 × 8 × 128 × 2 = 131,072 bytes = 128 KB per token.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="2" data-ex-type="numeric" data-answer="2.0" data-tolerance="0.06" data-placeholder="GB">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 2</span><span class="text-xs uppercase tracking-wider text-ink-600">compute it</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Same model, 16,000-token context. About how many gigabytes is the cache? (1 GB = 2<sup>30</sup> bytes; one decimal.)</p></div>
+<div class="note text-sm" data-ex-explain hidden><p>131,072 × 16,000 = 2.10 × 10<sup>9</sup> bytes ≈ 1.95 GB, so about 2.0 GB.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="3" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 3</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why does the cache grow in blocks of 256 positions instead of concatenating each new token?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">To save memory</button>
+<button type="button" data-opt="1">Concatenating copies the whole history every token, which makes decode quadratic again</button>
+<button type="button" data-opt="2">MLX cannot concatenate</button>
+<button type="button" data-opt="3">Attention requires multiples of 256</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Writing into preallocated space costs one token's worth of work; reallocating happens once per 256 tokens.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="4" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 4</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>Why is the last prompt token not part of the prefill chunks?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">It is the end token</button>
+<button type="button" data-opt="1">Its logits are needed to sample the first output token, so it goes through the regular step</button>
+<button type="button" data-opt="2">It does not fit in a chunk</button>
+<button type="button" data-opt="3">RoPE cannot handle it</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Prefill chunks only need to fill the cache, so their logits are thrown away. The last position's logits produce the first token.</p></div>
+</div>
+<div class="card-tight space-y-3" data-ex data-ex-id="5" data-ex-type="mcq" data-answer="1">
+<div class="flex items-center gap-2"><span class="pill font-mono">Exercise 5</span><span class="text-xs uppercase tracking-wider text-ink-600">one answer</span></div>
+<div class="prose-block text-sm" data-ex-prompt><p>What does the generator overlap by calling asyncEval on step n+1 before item() on step n?</p></div>
+<div class="space-y-2">
+<button type="button" data-opt="0">Two GPU kernels</button>
+<button type="button" data-opt="1">CPU work for token n (reading, detokenizing, streaming, building the next graph) with GPU work for token n+1</button>
+<button type="button" data-opt="2">Prefill and decode</button>
+<button type="button" data-opt="3">Two requests</button>
+</div>
+<div class="note text-sm" data-ex-explain hidden><p>Without it, the GPU idles while the CPU handles each token. With it, the next forward pass is already running.</p></div>
+</div>
+    </section>
+
+    <div class="card flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-ink-100">Done with this lesson?</p>
+        <p class="text-xs text-ink-400">A lesson counts as complete once it is marked read and every exercise is solved.</p>
+      </div>
+      <button class="btn" data-mark-read>Mark lesson as read</button>
+    </div>
+
+    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-6">
+      <a class="btn" href="08-loading-weights-and-proving-parity.html" data-nav-prev>← 8. Loading weights and proving parity</a>
+      <a class="btn btn-primary" href="10-sampling.html" data-nav-next>10. Sampling →</a>
+    </nav>
+    <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
+    <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+  </main>
+
+  <aside class="hidden lg:block">
+    <div class="sticky top-20 space-y-2">
+      <p class="px-2 text-xs font-semibold uppercase tracking-widest text-ink-600">On this page</p>
+      <nav data-toc class="space-y-0.5"></nav>
+    </div>
+  </aside>
+</div>
+<script src="../assets/js/viz/l09.js" defer></script>
+</body>
+</html>

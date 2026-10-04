@@ -7,7 +7,8 @@
 #
 # `dist` runs both Tailwind builds first, so the CSS is never stale.
 
-COURSE := courses/llm-from-scratch
+COURSES := courses/llm-from-scratch courses/mlx-swift-inference
+SWIFT_COURSE := courses/mlx-swift-inference
 
 .PHONY: all css dist zip clean
 
@@ -15,13 +16,15 @@ all: zip
 
 css:
 	./build.sh
-	$(COURSE)/build.sh
+	for c in $(COURSES); do $$c/build.sh; done
 
 dist: css
 	rm -rf dist
-	mkdir -p dist/$(COURSE)
-	cp index.html styles.css custom.css dist/
-	cp -R $(COURSE)/index.html $(COURSE)/lessons $(COURSE)/assets dist/$(COURSE)/
+	cp index.html styles.css custom.css dist/ 2>/dev/null || (mkdir -p dist && cp index.html styles.css custom.css dist/)
+	for c in $(COURSES); do mkdir -p dist/$$c && cp -R $$c/index.html $$c/lessons $$c/assets dist/$$c/; done
+	# The Swift course links to its companion package as a download.
+	cd $(SWIFT_COURSE) && zip -qr $(CURDIR)/dist/$(SWIFT_COURSE)/qwenserve-src.zip code \
+		-x 'code/DerivedData/*' -x 'code/.build/*' -x 'code/.swiftpm/*' -x '*.profraw' -x '*.DS_Store'
 
 zip: dist
 	rm -f site.zip
