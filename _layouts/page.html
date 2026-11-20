@@ -3,13 +3,10 @@
 <head>
 	<meta charset="utf-8" />
 
-	<link rel="preconnect" href="https://consent.cookiebot.com" crossorigin>
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 	<link rel="dns-prefetch" href="https://www.googletagmanager.com">
 
-	{% include cookiebot.html %}
-	{% include google-analytics.html %}
 	{% include head.html %}
 </head>
 
@@ -43,10 +40,13 @@
 
 {% include footer.html %}
 
+{% include cookie-consent.html %}
+
 <button id="gotoTop" aria-label="Back to top" class="fixed bottom-6 right-6 z-50 hidden h-11 w-11 items-center justify-center rounded-full border border-ink/15 bg-paper/90 text-ink shadow-[0_10px_30px_-12px_rgba(10,10,10,.5)] backdrop-blur transition hover:bg-ink hover:text-paper">
 	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-5 w-5"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
 </button>
 
 <script src="{{ '/assets/js/theme.js' | relative_url }}"></script>
+<script src="{{ '/assets/js/consent.js' | relative_url }}"></script>
 </body>
 </html>
