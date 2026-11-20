@@ -1,0 +1,5 @@
+# TODO
+
+- [ ] Self-host Google Fonts. `_includes/head.html` loads Inter, Instrument Serif and JetBrains Mono from `fonts.googleapis.com`, which sends every visitor's IP to Google. Serve the font files from `assets/fonts/` and drop the `fonts.googleapis.com` / `fonts.gstatic.com` preconnects in `_layouts/page.html`.
+- [ ] Evaluate Cloudflare Web Analytics, either alongside Google Analytics or as a replacement. It is cookieless, so as a replacement the consent banner (`_includes/cookie-consent.html`, `assets/js/consent.js`) could be removed. Alongside GA it would also count visitors who reject cookies.
+- [ ] Upgrade the theme from Tailwind v3 to v4. Move `tailwind.config.js` (fonts, `ink`/`paper` colors, safelist, content paths incl. `../blog@pages`) into CSS config in `_tailwind/input.css`, update `script/build-css.sh` and README, rebuild, and compare every page type visually. Until then build with a v3 CLI: the `tailwindcss` on PATH is v4 (used by the `edu` branch) and silently produces a broken stylesheet here.
