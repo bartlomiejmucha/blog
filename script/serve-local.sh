@@ -30,6 +30,7 @@ ln -sfn "$T/_layouts" "$S/_layouts"
 ln -sfn "$T/_sass"    "$S/_sass"
 ln -sfn "$T/assets/css" "$S/assets/css"
 ln -sfn "$T/assets/js"  "$S/assets/js"
+ln -sfn "$T/assets/fonts" "$S/assets/fonts"
 for f in "$T"/_includes/*.html; do ln -sfn "$f" "$S/_includes/$(basename "$f")"; done
 for f in "$T"/assets/*.json "$T"/assets/*.xml; do
   [ -e "$f" ] && ln -sfn "$f" "$S/assets/$(basename "$f")"
