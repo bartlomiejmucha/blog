@@ -2,12 +2,11 @@
 Click-to-load: nothing is requested from YouTube until the visitor presses play.
 The thumbnail is served from the content branch at assets/images/youtube/<id>.jpg.
 Without JavaScript the link opens the video on YouTube.
-The post layout adds loading="lazy" to the thumbnail, as it does for every image in a post.
 {%- endcomment -%}
 {%- assign video_id = include.url | split: '/' | last | split: '?' | first -%}
 <div class="video-wrapper my-8 overflow-hidden rounded-xl border border-ink/10 bg-ink">
 	<a href="https://www.youtube.com/watch?v={{ video_id }}" class="video-play" data-video-src="{{ include.url }}" target="_blank" rel="noopener">
-		<img src="{{ '/assets/images/youtube/' | append: video_id | append: '.jpg' | relative_url }}" alt="" class="video-iframe">
+		<img src="{{ '/assets/images/youtube/' | append: video_id | append: '.jpg' | relative_url }}" alt="" loading="lazy" class="video-iframe">
 		<span class="video-play-label">
 			<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
 			Play video <small>loads from YouTube</small>
