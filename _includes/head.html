@@ -49,6 +49,9 @@
 <meta name="msapplication-config" content="{{ '/assets/browserconfig.xml' | relative_url }}" />
 <meta name="theme-color" content="#f6f5f2">
 
+<!-- Inter (latin) is used on every page; preloading it avoids a flash of the fallback font. -->
+<link rel="preload" href="{{ '/assets/fonts/inter-latin.woff2' | relative_url }}" as="font" type="font/woff2" crossorigin>
+
 <!-- tailwind.css is generated from the classes used in _layouts/_includes/theme.js.
      Rerun ./script/build-css.sh after adding or changing a Tailwind class. See README.md. -->
 <link rel="stylesheet" href="{{ '/assets/css/tailwind.css' | relative_url }}" type="text/css" />

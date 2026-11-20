@@ -18,7 +18,9 @@ layout: page
 	<div class="mt-10 rule h-px"></div>
 
 	<div id="post-body" class="prose mt-10">
-		{{ content }}
+		{%- comment %} Lazy-load every image in the article body, so screenshots far down a post are not downloaded up front.
+		Some posts already set loading="lazy" via kramdown attributes, so it is stripped first to avoid a duplicate attribute. {% endcomment %}
+		{{ content | replace: ' loading="lazy"', '' | replace: '<img ', '<img loading="lazy" ' }}
 	</div>
 
 	{% include post-tags.html tags=page.tags %}
