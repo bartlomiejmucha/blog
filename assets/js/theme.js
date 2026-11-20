@@ -114,3 +114,20 @@
 		last = window.scrollY;
 	});
 }());
+
+// Click-to-load video embeds: swap the thumbnail link for the YouTube iframe,
+// so nothing is requested from YouTube until the visitor presses play.
+(function () {
+	document.addEventListener('click', function (e) {
+		var link = e.target.closest('.video-play');
+		if (!link) return;
+		e.preventDefault();
+		var src = link.getAttribute('data-video-src');
+		var frame = document.createElement('iframe');
+		frame.src = src + (src.indexOf('?') < 0 ? '?' : '&') + 'autoplay=1';
+		frame.className = 'video-iframe';
+		frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+		frame.allowFullscreen = true;
+		link.replaceWith(frame);
+	});
+}());
