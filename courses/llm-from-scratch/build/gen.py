@@ -91,7 +91,8 @@ HEAD = """<meta charset="utf-8">
 }})();
 </script>
 <script src="{base}assets/js/course.js" defer></script>
-<script src="{base}assets/js/app.js" defer></script>"""
+<script src="{base}assets/js/app.js" defer></script>
+<script src="{base}../../consent.js" defer></script>"""
 
 def lesson_page(L, prev, nxt):
     goals = "\n".join('<li>%s</li>' % g for g in L["goals"])
@@ -173,6 +174,7 @@ def lesson_page(L, prev, nxt):
     </nav>
     <p class="text-center text-xs text-ink-600">Tip: press <span class="kbd">←</span> and <span class="kbd">→</span> to move between lessons.</p>
     <p class="text-center text-xs text-ink-600">This course is AI-generated. It may contain mistakes — check anything important against primary sources.</p>
+    <p class="text-center text-xs text-ink-600"><button type="button" data-cookie-settings class="transition hover:text-ink-300">Cookie settings</button></p>
   </main>
 
   <aside class="hidden lg:block">
@@ -249,6 +251,8 @@ INDEX = """<!doctype html>
       </ul>
     </div>
   </section>
+
+  <p class="text-center text-xs text-ink-600"><button type="button" data-cookie-settings class="transition hover:text-ink-300">Cookie settings</button></p>
 </main>
 </body>
 </html>"""

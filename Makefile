@@ -20,7 +20,7 @@ css:
 
 dist: css
 	rm -rf dist
-	cp index.html styles.css custom.css dist/ 2>/dev/null || (mkdir -p dist && cp index.html styles.css custom.css dist/)
+	cp index.html styles.css custom.css consent.js dist/ 2>/dev/null || (mkdir -p dist && cp index.html styles.css custom.css consent.js dist/)
 	for c in $(COURSES); do mkdir -p dist/$$c && cp -R $$c/index.html $$c/lessons $$c/assets dist/$$c/; done
 	# The Swift course links to its companion package as a download.
 	cd $(SWIFT_COURSE) && zip -qr $(CURDIR)/dist/$(SWIFT_COURSE)/qwenserve-src.zip code \
