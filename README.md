@@ -25,7 +25,7 @@ will simply not exist in the stylesheet and the change will not show up on the s
 ./script/build-css.sh --watch  # rebuild while you edit
 ```
 
-The script needs the standalone Tailwind CLI, which requires no Node install. Download
+The script needs the standalone Tailwind CLI v4, which requires no Node install. Download
 `tailwindcss-macos-arm64` from the [Tailwind releases page](https://github.com/tailwindlabs/tailwindcss/releases),
 put it on your `PATH` as `tailwindcss`, or point `TAILWIND_BIN` at it:
 
@@ -33,9 +33,10 @@ put it on your `PATH` as `tailwindcss`, or point `TAILWIND_BIN` at it:
 TAILWIND_BIN=~/bin/tailwindcss ./script/build-css.sh
 ```
 
-Classes that only ever appear in JavaScript at runtime — the table-of-contents scroll-spy and the
-back-to-top button — are listed in the `safelist` in `tailwind.config.js`. Add to that list if you
-introduce more.
+Tailwind is configured in CSS, in `_tailwind/input.css`: the `@source` paths it scans, the
+`@theme` fonts and colours, and an `@source inline(...)` list of classes that only ever appear in
+JavaScript at runtime — the table-of-contents scroll-spy and the back-to-top button. Add to that
+list if you introduce more.
 
 ### Why not the Tailwind CDN
 
@@ -94,7 +95,7 @@ independently.
 - `layout: page` wraps the page body in `.prose` so plain Markdown gets article typography.
   A page that ships its own Tailwind markup should set `no_prose: true` in its front matter to
   opt out — otherwise `.prose` link and list styling overrides it.
-- Colours are `ink` (`#0a0a0a`) and `paper` (`#f6f5f2`); define new ones in `tailwind.config.js`
+- Colours are `ink` (`#0a0a0a`) and `paper` (`#f6f5f2`); define new ones in the `@theme` block of `_tailwind/input.css`
   rather than as arbitrary hex values in the templates.
 - Fonts: Inter for text, Instrument Serif for italic accents, JetBrains Mono for code.
 - Article headings come from post Markdown. Both `##` and `###` are picked up by the table of

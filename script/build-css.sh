@@ -18,4 +18,4 @@ if ! command -v "$BIN" >/dev/null 2>&1; then
 	exit 1
 fi
 
-"$BIN" --config tailwind.config.js --input _tailwind/input.css --output assets/css/tailwind.css --minify "$@"
+"$BIN" --input _tailwind/input.css --output assets/css/tailwind.css --minify "$@"

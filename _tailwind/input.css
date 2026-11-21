@@ -1,6 +1,32 @@
 /* Source for assets/css/tailwind.css.
    Build it with ./script/build-css.sh — the output is committed to the repository,
    so a class that is not compiled in does not exist on the site. See README.md. */
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss" source(none);
+
+@source "../_layouts";
+@source "../_includes";
+@source "../assets/js";
+/* The content branch (blog@pages) is a sibling checkout and also uses
+   Tailwind classes in its pages. Scanned when present, ignored otherwise. */
+@source "../../blog@pages/*.md";
+@source "../../blog@pages/_includes/*.md";
+
+/* Applied at runtime by assets/js/theme.js (TOC scroll-spy, back-to-top). */
+@source inline("font-medium text-ink text-ink/55 pl-4 hidden flex");
+
+@theme {
+	--font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+	--font-serif: "Instrument Serif", ui-serif, Georgia, serif;
+	--font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+	--color-ink: #0a0a0a;
+	--color-paper: #f6f5f2;
+}
+
+/* v4 gives buttons the default cursor. Keep the v3 pointer. */
+@layer base {
+	button:not(:disabled),
+	[role="button"]:not(:disabled) {
+		cursor: pointer;
+	}
+}
