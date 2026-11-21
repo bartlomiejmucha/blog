@@ -49,7 +49,7 @@
 <!-- Hero -->
 <section id="top" class="mx-auto max-w-6xl px-6 pt-20 pb-16 sm:pt-32 sm:pb-24">
   <p class="mb-6 text-xs uppercase tracking-[0.25em] text-ink/45">Independent software · 2026</p>
-  <h1 class="max-w-3xl text-5xl leading-[1.05] tracking-tight sm:text-7xl">
+  <h1 class="max-w-3xl text-5xl leading-[1.05] tracking-tight sm:text-7xl sm:leading-none">
     Software that runs <span class="font-serif italic">on your machine</span>, not someone else’s.
   </h1>
   <p class="mt-8 max-w-xl text-lg leading-relaxed text-ink/65">
@@ -203,13 +203,13 @@
 <!-- Footer CTA -->
 <footer class="border-t border-ink/10 bg-ink text-paper">
   <div class="mx-auto max-w-6xl px-6 py-20">
-    <h2 class="max-w-2xl text-4xl leading-tight tracking-tight sm:text-5xl">
+    <h2 class="max-w-2xl text-4xl leading-tight tracking-tight sm:text-5xl sm:leading-none">
       Want early access, or <span class="font-serif italic">something built</span>?
     </h2>
     <a href="https://www.linkedin.com/in/bartlomiejmucha/" target="_blank" rel="noopener" class="mt-8 inline-flex items-center gap-2.5 rounded-full bg-paper px-6 py-3 font-medium text-ink hover:bg-white transition"><svg viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5" aria-hidden="true"><path d="M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.13 1.45-2.13 2.94v5.67H9.35V9h3.41v1.56h.05a3.74 3.74 0 0 1 3.37-1.85c3.6 0 4.27 2.37 4.27 5.46v6.28ZM5.34 7.43a2.07 2.07 0 1 1 0-4.14 2.07 2.07 0 0 1 0 4.14Zm1.78 13.02H3.55V9h3.57v11.45ZM22.22 0H1.77C.79 0 0 .77 0 1.73v20.54C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.73V1.73C24 .77 23.2 0 22.22 0Z"/></svg>Connect on LinkedIn</a>
     <div class="mt-16 flex flex-col justify-between gap-4 border-t border-paper/15 pt-6 text-sm text-paper/50 sm:flex-row">
       <p>© 2026 Bartlomiej Mucha</p>
-      <p>apps.bartlomiejmucha.com</p>
+      <p><button type="button" data-cookie-settings class="transition hover:text-paper">Cookie settings</button><span class="mx-2 text-paper/25">/</span>apps.bartlomiejmucha.com</p>
     </div>
   </div>
 </footer>
@@ -255,5 +255,6 @@
 }());
 </script>
 
+<script src="consent.js" defer></script>
 </body>
 </html>

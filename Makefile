@@ -17,7 +17,7 @@ css:
 dist: css
 	rm -rf dist
 	mkdir -p dist
-	cp index.html styles.css custom.css dist/
+	cp index.html styles.css custom.css consent.js dist/
 	cp -R images dist/
 
 zip: dist

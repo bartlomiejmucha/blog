@@ -22,4 +22,4 @@ if ! command -v "$BIN" >/dev/null 2>&1; then
 	fi
 fi
 
-"$BIN" -c tailwind.config.js -i src/input.css -o styles.css --minify "$@"
+"$BIN" -i src/input.css -o styles.css --minify "$@"
