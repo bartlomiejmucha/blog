@@ -29,7 +29,8 @@
 	}
 
 	function loadAnalytics() {
-		if (!gaId || window.gtag) return;
+		// Only the live site reports. Local and preview hosts never load GA.
+		if (!gaId || window.gtag || !/(^|\.)bartlomiejmucha\.com$/.test(location.hostname)) return;
 		window.dataLayer = window.dataLayer || [];
 		window.gtag = function () { dataLayer.push(arguments); };
 		gtag('js', new Date());
